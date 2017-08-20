@@ -1,4 +1,4 @@
-module Main exposing (..)
+port module Main exposing (..)
 
 import Dict exposing (Dict)
 import Html.Attributes as Html
@@ -16,17 +16,19 @@ import Material.List as Lists
 import Material.Options as Options exposing (styled, css, cs, when)
 import Material.Textfield as Textfield
 import Material.Theme as Theme
+import Material.Toolbar as Toolbar
 import Material.Typography as Typography
 import Navigation exposing (Location)
+import Regex
 import Task
 
 import Api
+import Github
 import Value
 
 
-main : Program Never Model Msg
 main =
-    Navigation.program (Navigate << .hash)
+    Navigation.programWithFlags (Navigate << .hash)
         { init = init
         , subscriptions = subscriptions
         , update = update
@@ -39,6 +41,13 @@ type alias Model =
     , apis : Dict String ApiModel
     , error : Maybe Http.Error
     , page : Page
+
+    , clientId : String
+    , clientSecret : String
+    , auth : Maybe { code : String, state : String }
+    , accessToken : Maybe String
+    , user : Maybe Github.User
+    , loginProcess : Bool
     }
 
 
@@ -48,6 +57,13 @@ defaultModel =
     , apis = Dict.empty
     , error = Nothing
     , page = defaultPage
+
+    , clientId = ""
+    , clientSecret = ""
+    , auth = Nothing
+    , accessToken = Nothing
+    , user = Nothing
+    , loginProcess = True
     }
 
 
@@ -57,6 +73,14 @@ type Msg
     | ApiMsg String (ApiMsg Msg)
     | Error Http.Error
     | Navigate String
+
+    | Login
+    | InputClientId String
+    | InputClientSecret String
+    | Authenticate String
+    | UserProfile Github.User
+
+    | TestTree (List Github.Blob)
 
 
 type alias ApiModel =
@@ -90,16 +114,93 @@ type ApiMsg m
     | DeleteOk Value
 
 
-init : Location -> ( Model, Cmd Msg )
-init location =
+init
+  : { auth : Maybe { code : String
+    , state : String }
+    , accessToken : Maybe String
+    , clientId : String
+    , clientSecret : String
+    }
+  -> Location
+  -> ( Model, Cmd Msg )
+init flags location =
     let
         page =
             fromHash location.hash
     in
-    ( { defaultModel | page = page }
+    ( { defaultModel
+        | page = page
+        , auth = flags.auth
+        , accessToken = flags.accessToken
+        , clientId = flags.clientId
+        , clientSecret = flags.clientSecret
+      }
     ,
-      pageInit defaultModel page
-      |> Cmd.batch
+      Cmd.batch
+      [
+        pageInit defaultModel page
+        |> Cmd.batch
+
+      , case (flags.accessToken, flags.auth) of
+            ( Just accessToken, _ ) ->
+                Cmd.batch
+                [ Github.user accessToken
+                  |> Task.attempt (\ result ->
+                      case result of
+                        Ok user -> UserProfile user
+                        Err error -> Error error
+                     )
+                , let
+                      owner =
+                          "aforemny"
+
+                      project =
+                          "ncms"
+                  in
+                  Github.reference accessToken owner project "heads/gh-pages"
+                  |> Task.andThen (\ reference ->
+                        Github.tree accessToken True owner project reference.object.sha
+                     )
+                  |> Task.andThen (\ { tree } ->
+                        tree
+                        |> List.filter (\ file ->
+                              Regex.contains (Regex.regex "^data/.*\\.json$") file.path
+                           )
+                        |> List.map (\ file ->
+                              Github.blob accessToken owner project file.sha
+                           )
+                        |> Task.sequence
+                     )
+                  |> Task.attempt (\ result ->
+                      case result of
+                        Ok user -> TestTree user
+                        Err error -> Error error
+                     )
+                ]
+
+            ( Nothing, Just { code, state } ) ->
+                Http.send (handle Error Authenticate) <|
+                Http.request
+                  { method =
+                      "POST"
+                  , headers =
+                      [ Http.header "Accept" "application/json"
+                      ]
+                  , url =
+                      "https://cors-anywhere.herokuapp.com/https://github.com/login/oauth/access_token?client_id=" ++ flags.clientId ++ "&client_secret=" ++ flags.clientSecret ++ "&code=" ++ code ++ "&state=123"
+                   , body =
+                       Http.emptyBody
+                   , expect =
+                       Http.expectJson <|
+                       Decode.at [ "access_token" ] Decode.string
+                   , timeout=
+                       Nothing
+                   , withCredentials =
+                       False
+                  }
+            _ ->
+                Cmd.none
+      ]
     )
 
 
@@ -186,11 +287,67 @@ subscriptions model =
     Sub.none
 
 
+port redirect : String -> Cmd msg
+
+
+port cacheAccessToken : String -> Cmd msg
+
+
+port clearAccessToken : () -> Cmd msg
+
+
+port cacheClientCredentials : { clientId : String, clientSecret : String, redirectUrl : Maybe String } -> Cmd msg
+
+
+port clearClientCredentials : () -> Cmd msg
+
+
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
-    case Debug.log "msg" msg of
+    case msg of
+        TestTree tree ->
+            let
+                _ = Debug.log "tree" tree
+            in
+            ( model, Cmd.none )
+
         Mdl msg_ ->
             Material.update Mdl msg_ model
+
+        UserProfile user ->
+            ( { model | user = Just user }, Cmd.none )
+
+        Authenticate accessToken ->
+            ( { model | accessToken = Just accessToken }
+            ,
+              Cmd.batch
+              [ cacheAccessToken accessToken
+              , Github.user accessToken
+                |> Task.attempt (\ result ->
+                    case result of
+                      Ok user -> UserProfile user
+                      Err error -> Error error
+                   )
+              ]
+            )
+
+        Login ->
+            ( model
+            ,
+              Cmd.batch
+              [ cacheClientCredentials
+                { clientId = model.clientId
+                , clientSecret = model.clientSecret
+                , redirectUrl = Just ("https://github.com/login/oauth/authorize?client_id=" ++ model.clientId ++ "&state=123")
+                }
+              ]
+            )
+
+        InputClientId clientId ->
+          ( { model | clientId = clientId }, Cmd.none )
+
+        InputClientSecret clientSecret ->
+          ( { model | clientSecret = clientSecret }, Cmd.none )
 
         Navigate hash ->
             let
@@ -203,13 +360,26 @@ update msg model =
                   Cmd.none
               else
                   Cmd.batch
-                  [ Navigation.newUrl hash
+                  [ Navigation.newUrl (if hash == "" then "#" else hash)
                   , Cmd.batch (pageInit model page)
                   ]
             )
 
         Error error ->
-            ( { model | error = Just error }, Cmd.none )
+            let
+                _ = Debug.log "error" error
+            in
+            ( { model | error = Just error }
+            ,
+              if model.loginProcess then
+                  case error of
+                      Http.BadStatus _ ->
+                          clearAccessToken ()
+                      _ ->
+                          Cmd.none
+              else
+                  Cmd.none
+            )
 
         ApiMsg id msg_ ->
             let
@@ -348,7 +518,6 @@ apiUpdate { type_, types, idField, api } lift msg model =
 
                 value_ =
                     value tehtype
-                    |> Debug.log "value_"
             in
             ( { model
                 | value = value_
@@ -375,21 +544,43 @@ view model =
     [ Typography.typography
     , css "display" "flex"
     , css "flex-flow" "row"
-    , css "min-height" "100vh"
     ]
     [ Drawer.render Mdl [0] model.mdl []
-      [ Drawer.content []
+      [
+        Drawer.toolbarSpacer [] []
+
+      , Drawer.content []
         [ Lists.group []
           [
             Lists.subheader
-            [ css "padding-left" "24px" ]
+              [ css "padding-left" "24px"
+              ]
+              [ text "Ncms"
+              ]
+
+          , Lists.ul []
+            [ Lists.li
+              [ Options.onClick (Navigate (toHash Dashboard))
+              , css "cursor" "pointer"
+              ]
+              [ Lists.text
+                [ css "padding-left" "36px"
+                ]
+                [ text "Dashboard"
+                ]
+              ]
+            ]
+          , 
+            Lists.subheader
+            [ css "padding-left" "24px"
+            ]
             [ text "Endpoints"
             ]
           , Lists.ul []
             ( Api.apis
               |> List.map (\ api ->
                    Lists.li
-                   [ Options.on "click" (Decode.succeed (Navigate ("#" ++ api.type_)))
+                   [ Options.onClick (Navigate (toHash (Listing api.type_)))
                    , css "cursor" "pointer"
                    ]
                    [ Lists.text
@@ -404,85 +595,202 @@ view model =
         ]
       ]
 
-    , case model.page of
-          Dashboard ->
-              Html.div []
-              [ text "Dashboard"
-              ]
+    , styled Html.div
+      [ css "display" "flex"
+      , css "flex-flow" "column"
+      , css "flex-grow" "1"
+      ]
+      [ Toolbar.view []
+        [ Toolbar.row []
+          [ Toolbar.title []
+            [ text "ncms"
+            ]
+          , Toolbar.section
+            [ Toolbar.alignEnd
+            ]
+            [
+            ]
+          , Toolbar.section
+            [ Toolbar.alignEnd
+            ]
+            ( case model.user of
+                  Just user ->
+                      [ Html.img
+                        [ Html.src user.avatarUrl
+                        , Html.style
+                          [ ("width", "42px")
+                          , ("height", "42px")
+                          , ("border-radius", "21px")
+                          , ("align-self", "center")
+                          , ("margin-right", "16px")
+                          ]
+                        ]
+                        []
 
-          New apiId ->
+                      , styled Html.div
+                        [ css "align-self" "center"
+                        , css "margin-right" "32px"
+                        ]
+                        [ Html.text user.name ]
+                      ]
 
-              let
-                  api =
-                      Api.apis
-                      |> List.filter (\ api -> api.type_ == apiId)
-                      |> List.head
-              in
-              case api of
-                  Just api ->
-                      let
-                          apiModel =
-                              Dict.get api.type_ model.apis
-                              |> Maybe.withDefault defaultApiModel
-                      in
-                      case List.head (List.filter (\ { type_ } -> type_ == apiId) api.types) of
-                        Just type_ ->
-                          editView (ApiMsg api.type_) type_ apiModel
+                  Nothing ->
+                      [ styled Html.div
+                        [ css "width" "42px"
+                        , css "height" "42px"
+                        , css "border-radius" "21px"
+                        , css "align-self" "center"
+                        , css "margin-right" "16px"
+                        , css "background-color" "#ccc"
+                        ]
+                        []
+
+                      , styled Html.div
+                        [ css "align-self" "center"
+                        , css "margin-right" "32px"
+                        , css "background-color" "#ccc"
+                        , css "height" "24px"
+                        , css "border-radius" "12px"
+                        , css "width" "160px"
+                        ]
+                        []
+                      ]
+            )
+          ]
+        ]
+
+      , styled Html.div
+        [ css "padding-left" "36px"
+        ]
+        [ case model.page of
+              Dashboard ->
+                  Html.div []
+                  [
+                    styled Html.h1 [ Typography.title ] [ text "Dashboard" ]
+
+                  , case model.accessToken of
                         Nothing ->
-                          text "type not found"
+                            Card.view
+                            [ css "max-width" "600px"
+                            ]
+                            [
+                              Card.primary []
+                              [ Card.title [ Card.large ] [ text "Login" ]
+                              ]
 
-                  Nothing ->
-                      text "api not found"
+                            , Card.supportingText
+                              [ css "display" "flex"
+                              , css "flex-flow" "column"
+                              ]
+                              [
+                                Html.label []
+                                [ text "Client Id:"
+                                ]
+                              , Textfield.render Mdl [0,0,0,1] model.mdl
+                                [ Options.onInput InputClientId
+                                , Textfield.value model.clientId
+                                ]
+                                []
+                              ,
+                                Html.label []
+                                [ text "Client Secret:"
+                                ]
+                              , Textfield.render Mdl [0,0,0,2] model.mdl
+                                [ Options.onInput InputClientSecret
+                                , Textfield.value model.clientSecret
+                                ]
+                                []
+                              , Button.render Mdl [0,0,0,3] model.mdl
+                                [ Options.onClick Login
+                                , Button.raised
+                                , Button.accent
+                                ]
+                                [ text "Sign in"
+                                ]
+                              ]
+                            ]
+                        Just _ ->
+                            Card.view
+                            [ css "max-width" "900px"
+                            ]
+                            [ text (toString model.user)
+                            ]
+                  ]
 
-          Edit apiId objId  ->
+              New apiId ->
 
-              let
-                  api =
-                      Api.apis
-                      |> List.filter (\ api -> api.type_ == apiId)
-                      |> List.head
-              in
-              case api of
-                  Just api ->
-                      let
-                          apiModel =
-                              Dict.get api.type_ model.apis
-                              |> Maybe.withDefault defaultApiModel
-                      in
-                      case List.head (List.filter (\ { type_ } -> type_ == apiId) api.types) of
-                        Just type_ ->
-                          editView (ApiMsg api.type_) type_ apiModel
-                        Nothing ->
-                          text "type not found"
+                  let
+                      api =
+                          Api.apis
+                          |> List.filter (\ api -> api.type_ == apiId)
+                          |> List.head
+                  in
+                  case api of
+                      Just api ->
+                          let
+                              apiModel =
+                                  Dict.get api.type_ model.apis
+                                  |> Maybe.withDefault defaultApiModel
+                          in
+                          case List.head (List.filter (\ { type_ } -> type_ == apiId) api.types) of
+                            Just type_ ->
+                              editView (ApiMsg api.type_) type_ apiModel
+                            Nothing ->
+                              text "type not found"
 
-                  Nothing ->
-                      text "api not found"
+                      Nothing ->
+                          text "api not found"
 
-          Listing id ->
+              Edit apiId objId  ->
 
-              let
-                  api =
-                      Api.apis
-                      |> List.filter (\ api -> api.type_ == id)
-                      |> List.head
-              in
-              case api of
-                  Just api ->
-                      let
-                          apiModel =
-                              Dict.get api.type_ model.apis
-                              |> Maybe.withDefault defaultApiModel
-                      in
-                      listingView (ApiMsg api.type_) api apiModel
+                  let
+                      api =
+                          Api.apis
+                          |> List.filter (\ api -> api.type_ == apiId)
+                          |> List.head
+                  in
+                  case api of
+                      Just api ->
+                          let
+                              apiModel =
+                                  Dict.get api.type_ model.apis
+                                  |> Maybe.withDefault defaultApiModel
+                          in
+                          case List.head (List.filter (\ { type_ } -> type_ == apiId) api.types) of
+                            Just type_ ->
+                              editView (ApiMsg api.type_) type_ apiModel
+                            Nothing ->
+                              text "type not found"
 
-                  Nothing ->
-                      text "api not found"
+                      Nothing ->
+                          text "api not found"
 
-          NotFound _ ->
-              Html.div []
-              [ text "404"
-              ]
+              Listing id ->
 
+                  let
+                      api =
+                          Api.apis
+                          |> List.filter (\ api -> api.type_ == id)
+                          |> List.head
+                  in
+                  case api of
+                      Just api ->
+                          let
+                              apiModel =
+                                  Dict.get api.type_ model.apis
+                                  |> Maybe.withDefault defaultApiModel
+                          in
+                          listingView (ApiMsg api.type_) api apiModel
+
+                      Nothing ->
+                          text "api not found"
+
+              NotFound _ ->
+                  Html.div []
+                  [ text "404"
+                  ]
+        ]
+      ]
     ]
     |> Material.top
 

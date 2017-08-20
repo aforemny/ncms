@@ -83,6 +83,8 @@ main = do
         ( [
             [ (,) "" $ do
                 Snap.writeText =<< liftIO (readFile "build/index.html")
+            , (,) "elm.js" $ do
+                Snap.writeText =<< liftIO (readFile "build/elm.js")
             ]
 
           , concat apiRoutes

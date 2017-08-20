@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <title>ncms</title>
+  </head>
+  <body>
+
+    <style type="text/css">
+      body {
+        margin: 0;
+      }
+    </style>
+
+    <script src="elm.js"></script>
+    <script>
+      var flags =
+          { auth: null
+          , accessToken: null
+          , clientId : ""
+          , clientSecret : ""
+          }
+      var code = window.location.search.match(/code=([^&]+)/);
+      var state = window.location.search.match(/state=([^&]*)/);
+      if (state && code) {
+          code = code[1];
+          state = state[1];
+          var auth = { code: code, state: state };
+          window.localStorage.setItem("auth", JSON.stringify(auth));
+          window.location = window.location.origin + "/#";
+      }
+      var auth =
+        window.localStorage.getItem("auth");
+      if (auth) {
+          window.localStorage.removeItem("auth");
+          auth = JSON.parse(auth);
+          flags.auth = auth;
+      }
+      var accessToken =
+        window.localStorage.getItem("accessToken");
+      flags.accessToken = accessToken;
+      var clientCredentials =
+        window.localStorage.getItem("clientCredentials") || "";
+      if (clientCredentials) {
+        clientCredentials = JSON.parse(clientCredentials);
+        if (!clientCredentials) {
+            window.localStorage.removeItem("clientCredentials");
+        }
+        flags.clientId = clientCredentials.clientId;
+        flags.clientSecret = clientCredentials.clientSecret;
+      }
+
+      app = Elm.Main.fullscreen(flags);
+      app.ports.redirect.subscribe(function(url) {
+        window.location = url;
+      });
+      app.ports.cacheAccessToken.subscribe(function(accessToken) {
+        window.localStorage.setItem("accessToken", accessToken);
+      });
+      app.ports.clearAccessToken.subscribe(function() {
+        window.localStorage.removeItem("accessToken");
+      });
+      app.ports.cacheClientCredentials.subscribe(function(clientCredentials) {
+        redirectUrl = clientCredentials.redirectUrl;
+        clientCredentials =
+          { clientId: clientCredentials.clientId,
+            clientSecret: clientCredentials.clientSecret
+          };
+        window.localStorage.setItem("clientCredentials", JSON.stringify(clientCredentials));
+        if (redirectUrl) {
+          window.location = redirectUrl;
+        }
+      });
+      app.ports.clearAccessToken.subscribe(function() {
+        window.localStorage.removeItem("clientCredentials");
+      });
+    </script>
+  </body>
+</html>
