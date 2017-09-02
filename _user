@@ -1,0 +1,5 @@
+github_api of type User indexed on username:
+
+type User =
+    username : String
+    email : String

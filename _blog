@@ -1,0 +1,8 @@
+github_api of type Blog indexed on id:
+
+type Blog =
+    id : String
+    published : Bool
+    date : String
+    title : String
+    content : String
