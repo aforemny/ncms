@@ -57,7 +57,7 @@ main = do
                     error (Text.unpack e)
 
     mkdir "src/Api"
-    forM_ modules $ \ mod_@(Module (ApiDecl type_ idField) types _) -> do
+    forM_ modules $ \ mod_@(Module (ApiDecl kind type_ idField) types _) -> do
         let
             moduleName =
                 "Api." `Text.append` type_
@@ -94,7 +94,7 @@ main = do
 
 
 apiRoute :: Module -> List (LB.ByteString, Snap.Snap ())
-apiRoute (Module (ApiDecl type_ idField) types _) =
+apiRoute (Module (ApiDecl kind type_ idField) types _) =
     let
         endpoint =
             toLowercase type_
@@ -362,10 +362,11 @@ elmApis modules =
     Text.unlines
     [ "module Api exposing ( apis )"
     , "\n"
-    , "import Ncms.Backend.Ncms as Backend"
     , "import Json.Decode as Json"
+    , "import Ncms.Backend.Github as Github"
+    , "import Ncms.Backend.Ncms as Backend"
     , modules
-      & map (\ (Module (ApiDecl type_ idField) types _) ->
+      & map (\ (Module (ApiDecl kind type_ idField) types _) ->
           "import Api." + type_ + " as " + type_
         )
       & Text.unlines
@@ -373,7 +374,7 @@ elmApis modules =
     , "-- API"
     , "\n"
     , modules
-      & map (\ (Module (ApiDecl type_ idField) types _) ->
+      & map (\ (Module (ApiDecl kind type_ idField) types _) ->
           let
               endpoint =
                   toLowercase type_
@@ -399,12 +400,24 @@ elmApis modules =
             & Text.append "\n        [ "
             & Prelude.flip Text.append "\n        ]"
             & Text.append "types = "
-          , [ "get = Backend.get \"" + endpoint + "\" identity Json.value"
-            , "update = Backend.update \"" + endpoint + "\" identity Json.value"
-            , "delete = Backend.delete \"" + endpoint + "\" identity Json.value"
-            , "create = Backend.create \"" + endpoint + "\" identity Json.value"
-            , "list = Backend.list \"/" + endpoint + "\" identity Json.value"
-            ]
+          , ( case kind of
+                  "ncms" ->
+                      [ "get = Backend.get \"" + endpoint + "\" identity Json.value"
+                      , "update = Backend.update \"" + endpoint + "\" identity Json.value"
+                      , "delete = Backend.delete \"" + endpoint + "\" identity Json.value"
+                      , "create = Backend.create \"" + endpoint + "\" identity Json.value"
+                      , "list = Backend.list \"" + endpoint + "\" identity Json.value"
+                      ]
+                  "github" ->
+                      [ "get = Github.get \"" + endpoint + "\" identity Json.value"
+                      , "update = Github.update \"" + endpoint + "\" identity Json.value (Github.idField \"" + idField + "\")"
+                      , "delete = Github.delete \"" + endpoint + "\" identity Json.value"
+                      , "create = Github.create \"" + endpoint + "\" identity Json.value (Github.idField \"" + idField + "\")"
+                      , "list = Github.list \"" + endpoint + "\" identity Json.value"
+                      ]
+                  _ ->
+                      error "unsupported type"
+            )
             & Text.intercalate "\n        , "
             & Text.append "api = \n        { "
             & Prelude.flip Text.append "\n        }"
@@ -419,7 +432,7 @@ elmApis modules =
     ]
 
 
-elmApi modName (Module (ApiDecl type_ idField) types _) =
+elmApi modName (Module (ApiDecl kind type_ idField) types _) =
     let
         endpoint =
             toLowercase type_
@@ -461,40 +474,79 @@ elmApi modName (Module (ApiDecl type_ idField) types _) =
               )
 
         get =
-            Text.unlines
-            [ "get : (Result Error " + type_ + " -> msg) -> " + showTypeRep indexTypeRep + " -> Cmd msg"
-            , "get ="
-            , "    Backend.get \"" + endpoint + "\" encode" + type_ + " " + toLowercase type_ + "Decoder"
-            ]
-
-
-        update =
-            Text.unlines
-            [ "update : (Result Error " + type_ + " -> msg) -> " + type_ + " -> Cmd msg"
-            , "update ="
-            , "    Backend.update \"" + endpoint + "\" encode" + type_ + " " + toLowercase type_ + "Decoder " + "." + idField
-            ]
+            case kind of
+                "ncms" ->
+                    Text.unlines
+                    [ "get : (Result Error " + type_ + " -> msg) -> " + showTypeRep indexTypeRep + " -> Cmd msg"
+                    , "get ="
+                    , "    Backend.get \"" + endpoint + "\" encode" + type_ + " " + toLowercase type_ + "Decoder"
+                    ]
+                "github" ->
+                    Text.unlines
+                    [ "get : (Result Error " + type_ + " -> msg) -> String -> String -> String -> " + showTypeRep indexTypeRep + " -> Cmd msg"
+                    , "get ="
+                    , "    Backend.get \"" + endpoint + "\" encode" + type_ + " " + toLowercase type_ + "Decoder"
+                    ]
+                _ ->
+                    error "unsupported kind"
 
         delete =
             Text.unlines
-            [ "delete : (Result Error " + type_ + " -> msg) -> " + showTypeRep indexTypeRep + " -> Cmd msg"
+            [ "delete : (Result Error () -> msg) -> String -> String -> String -> String -> Cmd msg"
             , "delete ="
             , "    Backend.delete \"" + endpoint + "\" encode" + type_ + " " + toLowercase type_ + "Decoder"
             ]
 
+        update =
+            case kind of
+                "ncms" ->
+                    Text.unlines
+                    [ "update : (Result Error " + type_ + " -> msg) -> " + type_ + " -> Cmd msg"
+                    , "update ="
+                    , "    Backend.create \"" + endpoint + "\" encode" + type_ + " " + toLowercase type_ + "Decoder"
+                    ]
+                "github" ->
+                    Text.unlines
+                    [ "update : (Result Error " + type_ + " -> msg) -> String -> String -> String -> " + type_ + " -> Cmd msg"
+                    , "update ="
+                    , "    Backend.create \"" + endpoint + "\" encode" + type_ + " " + toLowercase type_ + "Decoder ." + idField
+                    ]
+                _ ->
+                    error "unsupported kind"
+
         create =
-            Text.unlines
-            [ "create : (Result Error " + type_ + " -> msg) -> " + type_ + " -> Cmd msg"
-            , "create ="
-            , "    Backend.create \"" + endpoint + "\" encode" + type_ + " " + toLowercase type_ + "Decoder"
-            ]
+            case kind of
+                "ncms" ->
+                    Text.unlines
+                    [ "create : (Result Error " + type_ + " -> msg) -> " + type_ + " -> Cmd msg"
+                    , "create ="
+                    , "    Backend.create \"" + endpoint + "\" encode" + type_ + " " + toLowercase type_ + "Decoder"
+                    ]
+                "github" ->
+                    Text.unlines
+                    [ "create : (Result Error " + type_ + " -> msg) -> String -> String -> String -> " + type_ + " -> Cmd msg"
+                    , "create ="
+                    , "    Backend.create \"" + endpoint + "\" encode" + type_ + " " + toLowercase type_ + "Decoder ." + idField
+                    ]
+                _ ->
+                    error "unsupported kind"
 
         list =
-            Text.unlines
-            [ "list : (Result Error (List " + type_ + ") -> msg) -> Cmd msg"
-            , "list ="
-            , "    Backend.list \"/" + endpoint + "\" encode" + type_ + " " + toLowercase type_ + "Decoder"
-            ]
+            case kind of
+                "ncms" ->
+                    Text.unlines
+                    [ "list : (Result Error (List " + type_ + ") -> msg) -> Cmd msg"
+                    , "list ="
+                    , "    Backend.list \"" + endpoint + "\" encode" + type_ + " " + toLowercase type_ + "Decoder"
+                    ]
+                "github" ->
+                    Text.unlines
+                    [ "list : (Result Error (List " + type_ + ") -> msg) -> String -> String -> String -> Cmd msg"
+                    , "list ="
+                    , "    Backend.list \"" + endpoint + "\" encode" + type_ + " " + toLowercase type_ + "Decoder"
+                    ]
+                _ ->
+                    error "unsupported kind"
 
         api =
             [ get
@@ -635,7 +687,13 @@ elmApi modName (Module (ApiDecl type_ idField) types _) =
     , "import Http exposing (Error)"
     , "import Json.Decode as Decode exposing (Decoder)"
     , "import Json.Encode as Encode"
-    , "import Ncms.Backend.Ncms as Backend"
+    , case kind of
+        "ncms" ->
+          "import Ncms.Backend.Ncms as Backend"
+        "github" ->
+          "import Ncms.Backend.Github as Backend"
+        _ ->
+          error "unsupported kind"
     , "\n"
 
     , "-- API"
@@ -746,7 +804,7 @@ exprs =
 
 
 data ApiDecl
-    = ApiDecl String String
+    = ApiDecl String String String
     deriving Show
 
 
@@ -757,9 +815,14 @@ data TypeDecl
 
 apiDecl :: Parser ApiDecl
 apiDecl =
-    ( ApiDecl
-        <$> (string "rest_api of type " *> typeName <* string "indexed on ")
-        <*> (word <* string ":")
+    ( oneOf
+      [ ApiDecl "ncms"
+          <$> (string "rest_api of type " *> typeName <* string "indexed on ")
+          <*> (word <* string ":")
+      , ApiDecl "github"
+          <$> (string "github_api of type " *> typeName <* string "indexed on ")
+          <*> (word <* string ":")
+      ]
     ) & lexeme
 
 

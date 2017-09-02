@@ -1,9 +1,11 @@
 cms:
 	mkdir -p build
 	cp page.html build/index.html
-	mkdir -p build/data
-	rsync -r _user user _blog blog build/data
+	rsync -r user blog build
 	elm-make --yes src/Main.elm --output build/elm.js
+
+pages: cms
+	(cd build && git add . && git commit -m "Update gh-pages")
 
 clean:
 	rm -rf elm-stuff/build-artifacts

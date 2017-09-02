@@ -19,11 +19,11 @@ import Material.Theme as Theme
 import Material.Toolbar as Toolbar
 import Material.Typography as Typography
 import Navigation exposing (Location)
+import Ncms.Github as Github
 import Regex
 import Task
 
 import Api
-import Github
 import Value
 
 
@@ -80,8 +80,6 @@ type Msg
     | Authenticate String
     | UserProfile Github.User
 
-    | TestTree (List Github.Blob)
-
 
 type alias ApiModel =
     { mdl : Material.Model
@@ -111,7 +109,7 @@ type ApiMsg m
     | SaveOk Value
     | Cancel
     | Delete String
-    | DeleteOk Value
+    | DeleteOk
 
 
 init
@@ -144,36 +142,10 @@ init flags location =
       , case (flags.accessToken, flags.auth) of
             ( Just accessToken, _ ) ->
                 Cmd.batch
-                [ Github.user accessToken
+                [ Github.getUser accessToken
                   |> Task.attempt (\ result ->
                       case result of
                         Ok user -> UserProfile user
-                        Err error -> Error error
-                     )
-                , let
-                      owner =
-                          "aforemny"
-
-                      project =
-                          "ncms"
-                  in
-                  Github.reference accessToken owner project "heads/gh-pages"
-                  |> Task.andThen (\ reference ->
-                        Github.tree accessToken True owner project reference.object.sha
-                     )
-                  |> Task.andThen (\ { tree } ->
-                        tree
-                        |> List.filter (\ file ->
-                              Regex.contains (Regex.regex "^data/.*\\.json$") file.path
-                           )
-                        |> List.map (\ file ->
-                              Github.blob accessToken owner project file.sha
-                           )
-                        |> Task.sequence
-                     )
-                  |> Task.attempt (\ result ->
-                      case result of
-                        Ok user -> TestTree user
                         Err error -> Error error
                      )
                 ]
@@ -262,6 +234,9 @@ pageInit model page =
             case api of
                 Just { api } ->
                     [ api.list (handle Error (List >> ApiMsg id))
+                        (Maybe.withDefault "" model.accessToken)
+                        "aforemny"
+                        "ncms"
                     ]
                 Nothing ->
                     []
@@ -275,7 +250,11 @@ pageInit model page =
             in
             case api of
                 Just { api } ->
-                    [ api.get (handle Error (Get >> ApiMsg id)) obj
+                    [ api.get (handle Error (Get >> ApiMsg id))
+                        (Maybe.withDefault "" model.accessToken)
+                        "aforemny"
+                        "ncms"
+                        obj
                     ]
                 Nothing ->
                     []
@@ -305,12 +284,6 @@ port clearClientCredentials : () -> Cmd msg
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
-        TestTree tree ->
-            let
-                _ = Debug.log "tree" tree
-            in
-            ( model, Cmd.none )
-
         Mdl msg_ ->
             Material.update Mdl msg_ model
 
@@ -322,7 +295,7 @@ update msg model =
             ,
               Cmd.batch
               [ cacheAccessToken accessToken
-              , Github.user accessToken
+              , Github.getUser accessToken
                 |> Task.attempt (\ result ->
                     case result of
                       Ok user -> UserProfile user
@@ -338,7 +311,7 @@ update msg model =
               [ cacheClientCredentials
                 { clientId = model.clientId
                 , clientSecret = model.clientSecret
-                , redirectUrl = Just ("https://github.com/login/oauth/authorize?client_id=" ++ model.clientId ++ "&state=123")
+                , redirectUrl = Just ("https://github.com/login/oauth/authorize?scope=repo&client_id=" ++ model.clientId ++ "&state=123")
                 }
               ]
             )
@@ -397,7 +370,7 @@ update msg model =
                     Just api ->
                         let
                             ( apiModel_, effects ) =
-                                apiUpdate api (ApiMsg id) msg_ apiModel
+                                apiUpdate (Maybe.withDefault "" model.accessToken) api (ApiMsg id) msg_ apiModel
 
                             apiModel =
                                 Dict.get id model.apis
@@ -412,7 +385,7 @@ update msg model =
 
 
 -- apiUpdate :  -> (ApiMsg Msg -> Msg) -> ApiMsg Msg -> ApiModel -> ( ApiModel, Cmd Msg )
-apiUpdate { type_, types, idField, api } lift msg model =
+apiUpdate accessToken { type_, types, idField, api } lift msg model =
     let
         id value =
             "" -- TODO
@@ -498,10 +471,10 @@ apiUpdate { type_, types, idField, api } lift msg model =
             ( { model | value = value }, Cmd.none )
 
         (Delete id) ->
-            ( model, api.delete (handle_ DeleteOk) id )
+            ( model, api.delete (handle_ (\_ -> DeleteOk)) accessToken "aforemny" "ncms" id )
 
-        (DeleteOk value) ->
-            ( model, api.list (handle_ List) )
+        DeleteOk ->
+            ( model, api.list (handle_ List) accessToken "aforemny" "ncms" )
 
         (Input fieldName fieldValue) ->
             ( { model | inputs = Dict.insert fieldName fieldValue model.inputs }, Cmd.none )
@@ -524,7 +497,8 @@ apiUpdate { type_, types, idField, api } lift msg model =
                 , inputs = Dict.empty
               }
             ,
-              api.create (handle_ SaveOk) value_ )
+              api.create (handle_ SaveOk) accessToken "aforemny" "ncms" value_
+            )
 
         SaveOk value ->
             ( model
@@ -683,7 +657,15 @@ view model =
                               , css "flex-flow" "column"
                               ]
                               [
-                                Html.label []
+                                Html.p []
+                                [ text "Obtain credentials by "
+                                , Html.a
+                                  [ Html.href "https://github.com/settings/applications/new"
+                                  ]
+                                  [ text "registering an application" ]
+                                , text " on GitHub."
+                                ]
+                              , Html.label []
                                 [ text "Client Id:"
                                 ]
                               , Textfield.render Mdl [0,0,0,1] model.mdl
@@ -713,7 +695,7 @@ view model =
                             Card.view
                             [ css "max-width" "900px"
                             ]
-                            [ text (toString model.user)
+                            [ text (toString model)
                             ]
                   ]
 

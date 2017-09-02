@@ -15,35 +15,35 @@ module Api.User exposing
 import Http exposing (Error)
 import Json.Decode as Decode exposing (Decoder)
 import Json.Encode as Encode
-import Ncms.Backend.Ncms as Backend
+import Ncms.Backend.Github as Backend
 
 
 -- API
 
 
-get : (Result Error User -> msg) -> String -> Cmd msg
+get : (Result Error User -> msg) -> String -> String -> String -> String -> Cmd msg
 get =
     Backend.get "user" encodeUser userDecoder
 
 
-update : (Result Error User -> msg) -> User -> Cmd msg
+update : (Result Error User -> msg) -> String -> String -> String -> User -> Cmd msg
 update =
-    Backend.update "user" encodeUser userDecoder .username
+    Backend.create "user" encodeUser userDecoder .username
 
 
-delete : (Result Error User -> msg) -> String -> Cmd msg
+delete : (Result Error () -> msg) -> String -> String -> String -> String -> Cmd msg
 delete =
     Backend.delete "user" encodeUser userDecoder
 
 
-list : (Result Error (List User) -> msg) -> Cmd msg
+list : (Result Error (List User) -> msg) -> String -> String -> String -> Cmd msg
 list =
-    Backend.list "/user" encodeUser userDecoder
+    Backend.list "user" encodeUser userDecoder
 
 
-create : (Result Error User -> msg) -> User -> Cmd msg
+create : (Result Error User -> msg) -> String -> String -> String -> User -> Cmd msg
 create =
-    Backend.create "user" encodeUser userDecoder
+    Backend.create "user" encodeUser userDecoder .username
 
 
 

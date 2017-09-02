@@ -15,35 +15,35 @@ module Api.Blog exposing
 import Http exposing (Error)
 import Json.Decode as Decode exposing (Decoder)
 import Json.Encode as Encode
-import Ncms.Backend.Ncms as Backend
+import Ncms.Backend.Github as Backend
 
 
 -- API
 
 
-get : (Result Error Blog -> msg) -> String -> Cmd msg
+get : (Result Error Blog -> msg) -> String -> String -> String -> String -> Cmd msg
 get =
     Backend.get "blog" encodeBlog blogDecoder
 
 
-update : (Result Error Blog -> msg) -> Blog -> Cmd msg
+update : (Result Error Blog -> msg) -> String -> String -> String -> Blog -> Cmd msg
 update =
-    Backend.update "blog" encodeBlog blogDecoder .id
+    Backend.create "blog" encodeBlog blogDecoder .id
 
 
-delete : (Result Error Blog -> msg) -> String -> Cmd msg
+delete : (Result Error () -> msg) -> String -> String -> String -> String -> Cmd msg
 delete =
     Backend.delete "blog" encodeBlog blogDecoder
 
 
-list : (Result Error (List Blog) -> msg) -> Cmd msg
+list : (Result Error (List Blog) -> msg) -> String -> String -> String -> Cmd msg
 list =
-    Backend.list "/blog" encodeBlog blogDecoder
+    Backend.list "blog" encodeBlog blogDecoder
 
 
-create : (Result Error Blog -> msg) -> Blog -> Cmd msg
+create : (Result Error Blog -> msg) -> String -> String -> String -> Blog -> Cmd msg
 create =
-    Backend.create "blog" encodeBlog blogDecoder
+    Backend.create "blog" encodeBlog blogDecoder .id
 
 
 
