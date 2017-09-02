@@ -4,6 +4,7 @@ module Api exposing ( apis )
 import Json.Decode as Json
 import Ncms.Backend.Github as Github
 import Ncms.Backend.Ncms as Backend
+import Ncms.Backend exposing (Rest,Prim(..))
 import Api.User as User
 import Api.Blog as Blog
 
@@ -12,46 +13,55 @@ import Api.Blog as Blog
 -- API
 
 
+apis : List (Rest msg)
 apis =
   [ 
-    { type_ = "User"
-    , idField = "username"
-    , types = 
-        [ { type_ = "User"
-          , fields = 
-            [ ( "username", "String" )
-            , ( "email", "String" )
-            ]
+    { tipe =
+          { name = "User"
+          , idField = 
+              { name = "username"
+              , tipe = String
+              }
+          , fields =
+              [
+              { name = "email"
+              , tipe = String
+              }
+              ]
           }
-        ]
-    , api = 
-        { get = Github.get "user" identity Json.value
-        , update = Github.update "user" identity Json.value (Github.idField "username")
-        , delete = Github.delete "user" identity Json.value
-        , create = Github.create "user" identity Json.value (Github.idField "username")
-        , list = Github.list "user" identity Json.value
-        }
+    , get = Github.get "user" identity Json.value
+    , update = Github.update "user" identity Json.value (Github.idField "username")
+    , delete = Github.delete "user" identity Json.value
+    , create = Github.create "user" identity Json.value (Github.idField "username")
+    , list = Github.list "user" identity Json.value
     }
   , 
-    { type_ = "Blog"
-    , idField = "id"
-    , types = 
-        [ { type_ = "Blog"
-          , fields = 
-            [ ( "id", "String" )
-            , ( "published", "Bool" )
-            , ( "date", "String" )
-            , ( "title", "String" )
-            , ( "content", "String" )
-            ]
+    { tipe =
+          { name = "Blog"
+          , idField = 
+              { name = "id"
+              , tipe = String
+              }
+          , fields =
+              [
+              { name = "published"
+              , tipe = String
+              }
+        ,              { name = "date"
+              , tipe = String
+              }
+        ,              { name = "title"
+              , tipe = String
+              }
+        ,              { name = "content"
+              , tipe = String
+              }
+              ]
           }
-        ]
-    , api = 
-        { get = Github.get "blog" identity Json.value
-        , update = Github.update "blog" identity Json.value (Github.idField "id")
-        , delete = Github.delete "blog" identity Json.value
-        , create = Github.create "blog" identity Json.value (Github.idField "id")
-        , list = Github.list "blog" identity Json.value
-        }
+    , get = Github.get "blog" identity Json.value
+    , update = Github.update "blog" identity Json.value (Github.idField "id")
+    , delete = Github.delete "blog" identity Json.value
+    , create = Github.create "blog" identity Json.value (Github.idField "id")
+    , list = Github.list "blog" identity Json.value
     }
   ] 

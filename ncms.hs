@@ -1,6 +1,7 @@
 {-# LANGUAGE NoImplicitPrelude #-}
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
+{-# LANGUAGE OverloadedStrings #-}
+
 module Main where
 
 import Control.Applicative ((<$>), (<*>), (<*), (*>), (<|>))
@@ -160,7 +161,7 @@ apiRoute (Module (ApiDecl kind type_ idField) types _) =
                           let
                               fn =
                                   Text.unpack endpoint FilePath.</> (id_ Prelude.++ ".json")
-                          if FilePath.normalise fn Prelude.== fn then do
+                          if FilePath.normalise fn == fn then do
                               liftIO $ ByteString.writeFile fn (Aeson.encode obj)
                               Snap.writeLBS (Aeson.encode obj)
                           else
@@ -179,7 +180,7 @@ apiRoute (Module (ApiDecl kind type_ idField) types _) =
           let
               fn =
                   Text.unpack endpoint FilePath.</> (id_ Prelude.++ ".json")
-          if FilePath.normalise fn Prelude.== fn then do
+          if FilePath.normalise fn == fn then do
               doesExist <- liftIO (Directory.doesFileExist fn)
               if doesExist then do
                   storedObj <- fmap Aeson.decode (liftIO (ByteString.readFile fn))
@@ -216,7 +217,7 @@ apiRoute (Module (ApiDecl kind type_ idField) types _) =
                                   case HashMap.lookup idField obj of
                                       Just (Aeson.String id_) -> Text.unpack id_
                                       _ -> ""
-                          if FilePath.normalise fn Prelude.== fn then do
+                          if FilePath.normalise fn == fn then do
                               liftIO $ ByteString.writeFile fn (Aeson.encode obj)
                               Snap.writeLBS (Aeson.encode obj)
                           else
@@ -336,10 +337,10 @@ findWith pred dir = do
     (Prelude.++) dirs <$> (fmap concat $ mapM find_ dirs)
 
 isPrefixOf pre str =
-    pre Prelude.== Prelude.take (Prelude.length pre) str
+    pre == Prelude.take (Prelude.length pre) str
 
 isSuffixOf suf str =
-    suf Prelude.== Prelude.drop (Prelude.length str Prelude.- Prelude.length suf) str
+    suf == Prelude.drop (Prelude.length str Prelude.- Prelude.length suf) str
 
 mkdir =
     Directory.createDirectoryIfMissing True
@@ -365,6 +366,7 @@ elmApis modules =
     , "import Json.Decode as Json"
     , "import Ncms.Backend.Github as Github"
     , "import Ncms.Backend.Ncms as Backend"
+    , "import Ncms.Backend exposing (Rest,Prim(..))"
     , modules
       & map (\ (Module (ApiDecl kind type_ idField) types _) ->
           "import Api." + type_ + " as " + type_
@@ -378,594 +380,633 @@ elmApis modules =
           let
               endpoint =
                   toLowercase type_
-          in
-          [ "type_ = \"" + type_ + "\""
-          , "idField = \"" + idField + "\""
-          , Map.elems types
-            & map (\ (TypeDecl typeName fields) ->
-                  [ "type_ = \"" + typeName + "\""
-                  , fields
-                    & map (\ ( fieldName, typeRep ) ->
-                          "( \"" + fieldName + "\", \"" + showTypeRep typeRep + "\" )"
-                      )
-                    & Text.intercalate "\n            , "
-                    & Text.append "fields = \n            [ "
-                    & Prelude.flip Text.append "\n            ]"
+
+              mainType =
+                Map.elems types
+                & Prelude.filter (\ (TypeDecl typeName fields) ->
+                      typeName == type_
+                  )
+                & head
+                & Maybe.maybe (error "no main type") Prelude.id
+
+              otherTypes =
+                  Map.elems types
+                  & Prelude.filter (\ (TypeDecl typeName fields) ->
+                        typeName /= type_
+                    )
+
+              makeType (TypeDecl typeName fields) =
+                  let
+                      ( idField : otherFields ) =
+                          fields
+
+                      makeField ( fieldName, typeRep ) =
+                          [ "name = \"" + fieldName + "\""
+                          , "tipe = " + makePrim typeRep
+                          ]
+                          & Text.intercalate "\n              , "
+                          & Text.append "              { "
+                          & Prelude.flip Text.append "\n              }"
+
+                      makePrim typeRep =
+                          case typeRep of
+                              _ ->
+                                  "String"
+                  in
+                  [ "name = \"" + typeName + "\""
+                  , "idField = \n" + makeField idField
+                  , otherFields
+                    & map makeField
+                    & Text.intercalate "\n        ,"
+                    & Text.append "fields =\n              [\n"
+                    & Prelude.flip Text.append "\n              ]"
                   ]
                   & Text.intercalate "\n          , "
-                  & Text.append "{ "
+                  & Text.append "          { "
                   & Prelude.flip Text.append "\n          }"
-              )
-            & Text.intercalate "\n          , "
-            & Text.append "\n        [ "
-            & Prelude.flip Text.append "\n        ]"
-            & Text.append "types = "
-          , ( case kind of
-                  "ncms" ->
-                      [ "get = Backend.get \"" + endpoint + "\" identity Json.value"
-                      , "update = Backend.update \"" + endpoint + "\" identity Json.value"
-                      , "delete = Backend.delete \"" + endpoint + "\" identity Json.value"
-                      , "create = Backend.create \"" + endpoint + "\" identity Json.value"
-                      , "list = Backend.list \"" + endpoint + "\" identity Json.value"
-                      ]
-                  "github" ->
-                      [ "get = Github.get \"" + endpoint + "\" identity Json.value"
-                      , "update = Github.update \"" + endpoint + "\" identity Json.value (Github.idField \"" + idField + "\")"
-                      , "delete = Github.delete \"" + endpoint + "\" identity Json.value"
-                      , "create = Github.create \"" + endpoint + "\" identity Json.value (Github.idField \"" + idField + "\")"
-                      , "list = Github.list \"" + endpoint + "\" identity Json.value"
-                      ]
-                  _ ->
-                      error "unsupported type"
-            )
-            & Text.intercalate "\n        , "
-            & Text.append "api = \n        { "
-            & Prelude.flip Text.append "\n        }"
-          ]
+        in
+        [
+          "tipe =\n" + makeType mainType
+
+        , ( case kind of
+                "ncms" ->
+                    [ "get = Backend.get \"" + endpoint + "\" identity Json.value"
+                    , "update = Backend.update \"" + endpoint + "\" identity Json.value"
+                    , "delete = Backend.delete \"" + endpoint + "\" identity Json.value"
+                    , "create = Backend.create \"" + endpoint + "\" identity Json.value"
+                    , "list = Backend.list \"" + endpoint + "\" identity Json.value"
+                    ]
+                "github" ->
+                    [ "get = Github.get \"" + endpoint + "\" identity Json.value"
+                    , "update = Github.update \"" + endpoint + "\" identity Json.value (Github.idField \"" + idField + "\")"
+                    , "delete = Github.delete \"" + endpoint + "\" identity Json.value"
+                    , "create = Github.create \"" + endpoint + "\" identity Json.value (Github.idField \"" + idField + "\")"
+                    , "list = Github.list \"" + endpoint + "\" identity Json.value"
+                    ]
+                _ ->
+                    error "unsupported type"
+          )
           & Text.intercalate "\n    , "
-          & Text.append "\n    { "
-          & Prelude.flip Text.append "\n    }"
-        )
-      & Text.intercalate "\n  , "
-      & Text.append "apis =\n  [ "
-      & Prelude.flip Text.append "\n  ] "
-    ]
+        ]
+        & Text.intercalate "\n    , "
+        & Text.append "\n    { "
+        & Prelude.flip Text.append "\n    }"
+      )
+    & Text.intercalate "\n  , "
+    & Text.append "apis =\n  [ "
+    & Text.append "apis : List (Rest msg)\n"
+    & Prelude.flip Text.append "\n  ] "
+  ]
 
 
 elmApi modName (Module (ApiDecl kind type_ idField) types _) =
-    let
-        endpoint =
-            toLowercase type_
+  let
+      endpoint =
+          toLowercase type_
 
-        exposing =
-            concat
-            [ [ "get"
-              , "update"
-              , "delete"
-              , "create"
-              , "list"
-              ]
-            , Map.keys types
-            , Map.keys types
-              & map (\ typeName -> "default" + typeName)
-            , Map.keys types
-              & map (\ typeName -> "encode" + typeName)
-            , Map.keys types
-              & map (\ typeName -> toLowercase typeName + "Decoder")
+      exposing =
+          concat
+          [ [ "get"
+            , "update"
+            , "delete"
+            , "create"
+            , "list"
             ]
+          , Map.keys types
+          , Map.keys types
+            & map (\ typeName -> "default" + typeName)
+          , Map.keys types
+            & map (\ typeName -> "encode" + typeName)
+          , Map.keys types
+            & map (\ typeName -> toLowercase typeName + "Decoder")
+          ]
 
-        (+) =
-            Text.append
+      (+) =
+          Text.append
 
-        indexTypeRep =
-            types
-            & Map.lookup type_
-            & Maybe.maybe (error "indexTypeRep")
-              ( \ type_ ->
-                case type_ of
-                    ( TypeDecl _ fields ) ->
-                        fields
-                        & Prelude.filter ( (Prelude.==) idField . Prelude.fst )
-                        & ( \xs ->
-                              case xs of
-                                  [ ( _, typeRep ) ] -> typeRep
-                                  _ -> error "indexTypeRep"
-                          )
-              )
-
-        get =
-            case kind of
-                "ncms" ->
-                    Text.unlines
-                    [ "get : (Result Error " + type_ + " -> msg) -> " + showTypeRep indexTypeRep + " -> Cmd msg"
-                    , "get ="
-                    , "    Backend.get \"" + endpoint + "\" encode" + type_ + " " + toLowercase type_ + "Decoder"
-                    ]
-                "github" ->
-                    Text.unlines
-                    [ "get : (Result Error " + type_ + " -> msg) -> String -> String -> String -> " + showTypeRep indexTypeRep + " -> Cmd msg"
-                    , "get ="
-                    , "    Backend.get \"" + endpoint + "\" encode" + type_ + " " + toLowercase type_ + "Decoder"
-                    ]
-                _ ->
-                    error "unsupported kind"
-
-        delete =
-            Text.unlines
-            [ "delete : (Result Error () -> msg) -> String -> String -> String -> String -> Cmd msg"
-            , "delete ="
-            , "    Backend.delete \"" + endpoint + "\" encode" + type_ + " " + toLowercase type_ + "Decoder"
-            ]
-
-        update =
-            case kind of
-                "ncms" ->
-                    Text.unlines
-                    [ "update : (Result Error " + type_ + " -> msg) -> " + type_ + " -> Cmd msg"
-                    , "update ="
-                    , "    Backend.create \"" + endpoint + "\" encode" + type_ + " " + toLowercase type_ + "Decoder"
-                    ]
-                "github" ->
-                    Text.unlines
-                    [ "update : (Result Error " + type_ + " -> msg) -> String -> String -> String -> " + type_ + " -> Cmd msg"
-                    , "update ="
-                    , "    Backend.create \"" + endpoint + "\" encode" + type_ + " " + toLowercase type_ + "Decoder ." + idField
-                    ]
-                _ ->
-                    error "unsupported kind"
-
-        create =
-            case kind of
-                "ncms" ->
-                    Text.unlines
-                    [ "create : (Result Error " + type_ + " -> msg) -> " + type_ + " -> Cmd msg"
-                    , "create ="
-                    , "    Backend.create \"" + endpoint + "\" encode" + type_ + " " + toLowercase type_ + "Decoder"
-                    ]
-                "github" ->
-                    Text.unlines
-                    [ "create : (Result Error " + type_ + " -> msg) -> String -> String -> String -> " + type_ + " -> Cmd msg"
-                    , "create ="
-                    , "    Backend.create \"" + endpoint + "\" encode" + type_ + " " + toLowercase type_ + "Decoder ." + idField
-                    ]
-                _ ->
-                    error "unsupported kind"
-
-        list =
-            case kind of
-                "ncms" ->
-                    Text.unlines
-                    [ "list : (Result Error (List " + type_ + ") -> msg) -> Cmd msg"
-                    , "list ="
-                    , "    Backend.list \"" + endpoint + "\" encode" + type_ + " " + toLowercase type_ + "Decoder"
-                    ]
-                "github" ->
-                    Text.unlines
-                    [ "list : (Result Error (List " + type_ + ") -> msg) -> String -> String -> String -> Cmd msg"
-                    , "list ="
-                    , "    Backend.list \"" + endpoint + "\" encode" + type_ + " " + toLowercase type_ + "Decoder"
-                    ]
-                _ ->
-                    error "unsupported kind"
-
-        api =
-            [ get
-            , update
-            , delete
-            , list
-            , create
-            ]
-            & Text.intercalate "\n\n"
-            & Prelude.flip Text.append "\n\n"
-
-        encoders =
-            let
-
-                encodeTypeRep typeRep =
-                    case typeRep of
-                        TString -> "Encode.string"
-                        TBool -> "Encode.bool"
-                        TInt -> "Encode.int"
-                        TFloat -> "Encode.float"
-                        TMaybe typeRep ->
-                            "Maybe.withDefault Encode.null <| Maybe.map "
-                            + encodeTypeRep typeRep
-                        TList typeRep ->
-                            "Encode.list <| List.map " + encodeTypeRep typeRep
-
-                decodeTypeRep (TypeDecl typeName fields)  =
-                    Text.unlines
-                    [ "encode" + typeName + " : " + typeName + " -> Decode.Value"
-                    , "encode" + typeName + " value ="
-                    , fields
-                      & map (\ ( fieldName, typeRep ) ->
-                          "( \"" + fieldName + "\", "
-                          + encodeTypeRep typeRep  + " value." + fieldName + " )"
+      indexTypeRep =
+          types
+          & Map.lookup type_
+          & Maybe.maybe (error "indexTypeRep")
+            ( \ type_ ->
+              case type_ of
+                  ( TypeDecl _ fields ) ->
+                      fields
+                      & Prelude.filter ( (==) idField . Prelude.fst )
+                      & ( \xs ->
+                            case xs of
+                                [ ( _, typeRep ) ] -> typeRep
+                                _ -> error "indexTypeRep"
                         )
-                      & Text.intercalate "\n    , "
-                      & Text.append "    [ "
-                      & Prelude.flip Text.append "\n    ]"
-                    , "    |> Encode.object"
-                    ]
-            in
-            Map.elems types
-            & map decodeTypeRep
-            & Text.intercalate "\n\n"
-            & Prelude.flip Text.append "\n\n"
+            )
 
-        decoders =
-            let
-                typeRepDecoder typeRep =
-                    case typeRep of
-                        TString -> "Decode.string"
-                        TBool -> "Decode.bool"
-                        TInt -> "Decode.int"
-                        TFloat -> "Decode.float"
-                        TMaybe typeRep -> "(Decode.maybe " + typeRepDecoder typeRep + ")"
-                        TList typeRep -> "(Decode.list " + typeRepDecoder typeRep + ")"
-
-
-                decodeTypeRep (TypeDecl typeName fields)  =
-                    Text.unlines
-                    [ toLowercase typeName + "Decoder : Decoder " + typeName
-                    , toLowercase typeName + "Decoder ="
-                    , fields
-                      & map (\ ( fieldName, typeRep ) ->
-                          "        ( Decode.at [ \"" + fieldName + "\" ] "
-                          + typeRepDecoder typeRep  + " )"
-                        )
-                      & Text.unlines
-                      & Text.append ("    Decode.map" + Text.pack (show (Prelude.length fields)) + " " + typeName + "\n")
-                    ]
-            in
-            Map.elems types
-            & map decodeTypeRep
-            & Text.intercalate "\n\n"
-            & Prelude.flip Text.append "\n\n"
-
-        showTypeRep typeRep =
-            case typeRep of
-                TString -> "String"
-                TBool -> "Bool"
-                TInt -> "Int"
-                TFloat -> "Float"
-                TMaybe typeRep -> "Maybe (" + showTypeRep typeRep + ")"
-                TList typeRep -> "List (" + showTypeRep typeRep + ")"
-
-        typeDefs =
-            Map.elems types
-            & map ( \ (TypeDecl typeName fields) ->
+      get =
+          case kind of
+              "ncms" ->
                   Text.unlines
-                  [ "type alias "  + typeName + " ="
+                  [ "get : (Result Error " + type_ + " -> msg) -> " + showTypeRep indexTypeRep + " -> Cmd msg"
+                  , "get ="
+                  , "    Backend.get \"" + endpoint + "\" encode" + type_ + " " + toLowercase type_ + "Decoder"
+                  ]
+              "github" ->
+                  Text.unlines
+                  [ "get : (Result Error " + type_ + " -> msg) -> String -> String -> String -> " + showTypeRep indexTypeRep + " -> Cmd msg"
+                  , "get ="
+                  , "    Backend.get \"" + endpoint + "\" encode" + type_ + " " + toLowercase type_ + "Decoder"
+                  ]
+              _ ->
+                  error "unsupported kind"
+
+      delete =
+          Text.unlines
+          [ "delete : (Result Error () -> msg) -> String -> String -> String -> String -> Cmd msg"
+          , "delete ="
+          , "    Backend.delete \"" + endpoint + "\" encode" + type_ + " " + toLowercase type_ + "Decoder"
+          ]
+
+      update =
+          case kind of
+              "ncms" ->
+                  Text.unlines
+                  [ "update : (Result Error " + type_ + " -> msg) -> " + type_ + " -> Cmd msg"
+                  , "update ="
+                  , "    Backend.create \"" + endpoint + "\" encode" + type_ + " " + toLowercase type_ + "Decoder"
+                  ]
+              "github" ->
+                  Text.unlines
+                  [ "update : (Result Error " + type_ + " -> msg) -> String -> String -> String -> " + type_ + " -> Cmd msg"
+                  , "update ="
+                  , "    Backend.create \"" + endpoint + "\" encode" + type_ + " " + toLowercase type_ + "Decoder ." + idField
+                  ]
+              _ ->
+                  error "unsupported kind"
+
+      create =
+          case kind of
+              "ncms" ->
+                  Text.unlines
+                  [ "create : (Result Error " + type_ + " -> msg) -> " + type_ + " -> Cmd msg"
+                  , "create ="
+                  , "    Backend.create \"" + endpoint + "\" encode" + type_ + " " + toLowercase type_ + "Decoder"
+                  ]
+              "github" ->
+                  Text.unlines
+                  [ "create : (Result Error " + type_ + " -> msg) -> String -> String -> String -> " + type_ + " -> Cmd msg"
+                  , "create ="
+                  , "    Backend.create \"" + endpoint + "\" encode" + type_ + " " + toLowercase type_ + "Decoder ." + idField
+                  ]
+              _ ->
+                  error "unsupported kind"
+
+      list =
+          case kind of
+              "ncms" ->
+                  Text.unlines
+                  [ "list : (Result Error (List " + type_ + ") -> msg) -> Cmd msg"
+                  , "list ="
+                  , "    Backend.list \"" + endpoint + "\" encode" + type_ + " " + toLowercase type_ + "Decoder"
+                  ]
+              "github" ->
+                  Text.unlines
+                  [ "list : (Result Error (List " + type_ + ") -> msg) -> String -> String -> String -> Cmd msg"
+                  , "list ="
+                  , "    Backend.list \"" + endpoint + "\" encode" + type_ + " " + toLowercase type_ + "Decoder"
+                  ]
+              _ ->
+                  error "unsupported kind"
+
+      api =
+          [ get
+          , update
+          , delete
+          , list
+          , create
+          ]
+          & Text.intercalate "\n\n"
+          & Prelude.flip Text.append "\n\n"
+
+      encoders =
+          let
+
+              encodeTypeRep typeRep =
+                  case typeRep of
+                      TString -> "Encode.string"
+                      TBool -> "Encode.bool"
+                      TInt -> "Encode.int"
+                      TFloat -> "Encode.float"
+                      TMaybe typeRep ->
+                          "Maybe.withDefault Encode.null <| Maybe.map "
+                          + encodeTypeRep typeRep
+                      TList typeRep ->
+                          "Encode.list <| List.map " + encodeTypeRep typeRep
+
+              decodeTypeRep (TypeDecl typeName fields)  =
+                  Text.unlines
+                  [ "encode" + typeName + " : " + typeName + " -> Decode.Value"
+                  , "encode" + typeName + " value ="
                   , fields
-                    & map (\ (fieldName, typeRep) ->
-                          fieldName + " : " + showTypeRep typeRep
+                    & map (\ ( fieldName, typeRep ) ->
+                        "( \"" + fieldName + "\", "
+                        + encodeTypeRep typeRep  + " value." + fieldName + " )"
                       )
                     & Text.intercalate "\n    , "
-                    & Text.append "    { "
-                    & Prelude.flip Text.append "\n    }"
+                    & Text.append "    [ "
+                    & Prelude.flip Text.append "\n    ]"
+                  , "    |> Encode.object"
                   ]
-              )
-            & Text.intercalate "\n\n"
+          in
+          Map.elems types
+          & map decodeTypeRep
+          & Text.intercalate "\n\n"
+          & Prelude.flip Text.append "\n\n"
 
-        typeRepDefault typeRep =
-            case typeRep of
-                TString -> "\"\""
-                TBool -> "False"
-                TInt -> "-1"
-                TFloat -> "0.0"
-                TMaybe typeRep -> "Nothing"
-                TList typeRep -> "[]"
+      decoders =
+          let
+              typeRepDecoder typeRep =
+                  case typeRep of
+                      TString -> "Decode.string"
+                      TBool -> "Decode.bool"
+                      TInt -> "Decode.int"
+                      TFloat -> "Decode.float"
+                      TMaybe typeRep -> "(Decode.maybe " + typeRepDecoder typeRep + ")"
+                      TList typeRep -> "(Decode.list " + typeRepDecoder typeRep + ")"
 
-        defaultTypes =
-            Map.elems types
-            & map ( \ (TypeDecl typeName fields) ->
+
+              decodeTypeRep (TypeDecl typeName fields)  =
                   Text.unlines
-                  [ "default" + typeName + " : " + typeName
-                  , "default" + typeName + " ="
+                  [ toLowercase typeName + "Decoder : Decoder " + typeName
+                  , toLowercase typeName + "Decoder ="
                   , fields
-                    & map (\ (fieldName, typeRep) ->
-                          fieldName + " = " + typeRepDefault typeRep
+                    & map (\ ( fieldName, typeRep ) ->
+                        "        ( Decode.at [ \"" + fieldName + "\" ] "
+                        + typeRepDecoder typeRep  + " )"
                       )
-                    & Text.intercalate "\n    , "
-                    & Text.append "    { "
-                    & Prelude.flip Text.append "\n    }"
+                    & Text.unlines
+                    & Text.append ("    Decode.map" + Text.pack (show (Prelude.length fields)) + " " + typeName + "\n")
                   ]
-              )
-            & Text.intercalate "\n\n"
-    in
-    Text.unlines
-    [ "module " + modName + " exposing"
-    , "    ( "
-    ,
-      exposing
-      & Text.intercalate "\n    , "
-      & Text.append "      "
+          in
+          Map.elems types
+          & map decodeTypeRep
+          & Text.intercalate "\n\n"
+          & Prelude.flip Text.append "\n\n"
 
-    , "    )"
-    , "\n"
-    , "import Http exposing (Error)"
-    , "import Json.Decode as Decode exposing (Decoder)"
-    , "import Json.Encode as Encode"
-    , case kind of
-        "ncms" ->
-          "import Ncms.Backend.Ncms as Backend"
-        "github" ->
-          "import Ncms.Backend.Github as Backend"
-        _ ->
-          error "unsupported kind"
-    , "\n"
+      showTypeRep typeRep =
+          case typeRep of
+              TString -> "String"
+              TBool -> "Bool"
+              TInt -> "Int"
+              TFloat -> "Float"
+              TMaybe typeRep -> "Maybe (" + showTypeRep typeRep + ")"
+              TList typeRep -> "List (" + showTypeRep typeRep + ")"
 
-    , "-- API"
-    , "\n"
-    , api
+      typeDefs =
+          Map.elems types
+          & map ( \ (TypeDecl typeName fields) ->
+                Text.unlines
+                [ "type alias "  + typeName + " ="
+                , fields
+                  & map (\ (fieldName, typeRep) ->
+                        fieldName + " : " + showTypeRep typeRep
+                    )
+                  & Text.intercalate "\n    , "
+                  & Text.append "    { "
+                  & Prelude.flip Text.append "\n    }"
+                ]
+            )
+          & Text.intercalate "\n\n"
 
-    , "-- TYPES"
-    , "\n"
-    , typeDefs
-    , "\n"
-    , defaultTypes
-    , "\n"
+      typeRepDefault typeRep =
+          case typeRep of
+              TString -> "\"\""
+              TBool -> "False"
+              TInt -> "-1"
+              TFloat -> "0.0"
+              TMaybe typeRep -> "Nothing"
+              TList typeRep -> "[]"
 
-    , "-- DECODER"
-    , "\n"
-    , decoders
+      defaultTypes =
+          Map.elems types
+          & map ( \ (TypeDecl typeName fields) ->
+                Text.unlines
+                [ "default" + typeName + " : " + typeName
+                , "default" + typeName + " ="
+                , fields
+                  & map (\ (fieldName, typeRep) ->
+                        fieldName + " = " + typeRepDefault typeRep
+                    )
+                  & Text.intercalate "\n    , "
+                  & Text.append "    { "
+                  & Prelude.flip Text.append "\n    }"
+                ]
+            )
+          & Text.intercalate "\n\n"
+  in
+  Text.unlines
+  [ "module " + modName + " exposing"
+  , "    ( "
+  ,
+    exposing
+    & Text.intercalate "\n    , "
+    & Text.append "      "
 
-    , "-- ENCODER"
-    , "\n"
-    , encoders
-    ]
+  , "    )"
+  , "\n"
+  , "import Http exposing (Error)"
+  , "import Json.Decode as Decode exposing (Decoder)"
+  , "import Json.Encode as Encode"
+  , case kind of
+      "ncms" ->
+        "import Ncms.Backend.Ncms as Backend"
+      "github" ->
+        "import Ncms.Backend.Github as Backend"
+      _ ->
+        error "unsupported kind"
+  , "\n"
+
+  , "-- API"
+  , "\n"
+  , api
+
+  , "-- TYPES"
+  , "\n"
+  , typeDefs
+  , "\n"
+  , defaultTypes
+  , "\n"
+
+  , "-- DECODER"
+  , "\n"
+  , decoders
+
+  , "-- ENCODER"
+  , "\n"
+  , encoders
+  ]
 
 
 readFile :: Prelude.FilePath -> IO String
 readFile =
-    fmap Text.pack . Prelude.readFile
+  fmap Text.pack . Prelude.readFile
 
 
 writeFile :: Prelude.FilePath -> String -> IO ()
 writeFile fileName contents =
-    Prelude.writeFile fileName (Text.unpack contents)
+  Prelude.writeFile fileName (Text.unpack contents)
 
 
 data Module =
-    Module ApiDecl (Map String TypeDecl) String deriving Show
+  Module ApiDecl (Map String TypeDecl) String deriving Show
 
 
 fromExprs :: List Expr -> Either String Module
 fromExprs exprs =
-    let
-        (apiDecls, typeDecls, garbage) =
-            foldl
-              (\(apiDecls, typeDecls, garbage') expr ->
-                  case expr of
-                      ETypeDecl typeDecl ->
-                          ( apiDecls, typeDecl:typeDecls, garbage' )
-                      EApiDecl apiDecl ->
-                          ( apiDecl:apiDecls, typeDecls, garbage' )
-                      EEof garbage ->
-                          ( apiDecls, typeDecls,
-                                garbage
-                                & Text.append garbage'
-                          )
-              )
-              ([], [], "")
-              exprs
-    in
-        case (apiDecls, typeDecls) of
-            ([apiDecl], typeDecls) ->
-                Right $
-                Module
-                    apiDecl
-                    ( typeDecls
-                      & map (\ typeDecl ->
-                          case typeDecl of
-                              TypeDecl typeName _ -> (typeName, typeDecl)
+  let
+      (apiDecls, typeDecls, garbage) =
+          foldl
+            (\(apiDecls, typeDecls, garbage') expr ->
+                case expr of
+                    ETypeDecl typeDecl ->
+                        ( apiDecls, typeDecl:typeDecls, garbage' )
+                    EApiDecl apiDecl ->
+                        ( apiDecl:apiDecls, typeDecls, garbage' )
+                    EEof garbage ->
+                        ( apiDecls, typeDecls,
+                              garbage
+                              & Text.append garbage'
                         )
-                      & Map.fromList
-                    )
-                    garbage
+            )
+            ([], [], "")
+            exprs
+  in
+      case (apiDecls, typeDecls) of
+          ([apiDecl], typeDecls) ->
+              Right $
+              Module
+                  apiDecl
+                  ( typeDecls
+                    & map (\ typeDecl ->
+                        case typeDecl of
+                            TypeDecl typeName _ -> (typeName, typeDecl)
+                      )
+                    & Map.fromList
+                  )
+                  garbage
 
-            (_, _) ->
-                Left $ "more than one api decl"
+          (_, _) ->
+              Left $ "more than one api decl"
 
 
 parse :: String -> Either String Module
 parse input =
-  fromExprs $
-  case Parser.parseOnly exprs input of
-      Left parserError ->
-          error "parserError"
-      Right exprs ->
-          exprs
+    fromExprs $
+    case Parser.parseOnly exprs input of
+        Left parserError ->
+            error "parserError"
+        Right exprs ->
+            exprs
 
 
 data Expr
-    = EApiDecl ApiDecl
-    | ETypeDecl TypeDecl
-    | EEof String
-    deriving Show
+  = EApiDecl ApiDecl
+  | ETypeDecl TypeDecl
+  | EEof String
+  deriving Show
 
 
 exprs :: Parser (List Expr)
 exprs =
-    let
-        token =
-            (fmap (Just . EApiDecl) apiDecl)
-              <|>
-              (fmap (Just . ETypeDecl) typeDecl)
-                  <|> pure Nothing
-    in
-        token >>= \token ->
-        case token of
-            Just token ->
-                (:) <$> (pure token) <*> exprs
-            Nothing ->
-                fmap (singleton . EEof) (Parser.takeText)
+  let
+      token =
+          (fmap (Just . EApiDecl) apiDecl)
+            <|>
+            (fmap (Just . ETypeDecl) typeDecl)
+                <|> pure Nothing
+  in
+      token >>= \token ->
+      case token of
+          Just token ->
+              (:) <$> (pure token) <*> exprs
+          Nothing ->
+              fmap (singleton . EEof) (Parser.takeText)
 
 
 data ApiDecl
-    = ApiDecl String String String
-    deriving Show
+  = ApiDecl String String String
+  deriving Show
 
 
 data TypeDecl
-    = TypeDecl String (List (String, TypeRep))
-    deriving Show
+  = TypeDecl String (List (String, TypeRep))
+  deriving Show
 
 
 apiDecl :: Parser ApiDecl
 apiDecl =
-    ( oneOf
-      [ ApiDecl "ncms"
-          <$> (string "rest_api of type " *> typeName <* string "indexed on ")
-          <*> (word <* string ":")
-      , ApiDecl "github"
-          <$> (string "github_api of type " *> typeName <* string "indexed on ")
-          <*> (word <* string ":")
-      ]
-    ) & lexeme
+  ( oneOf
+    [ ApiDecl "ncms"
+        <$> (string "rest_api of type " *> typeName <* string "indexed on ")
+        <*> (word <* string ":")
+    , ApiDecl "github"
+        <$> (string "github_api of type " *> typeName <* string "indexed on ")
+        <*> (word <* string ":")
+    ]
+  ) & lexeme
 
 
 typeName :: Parser String
 typeName =
-    word
+  word
 
 
 word :: Parser String
 word =
-    many Parser.letter
-    & fmap Text.pack
-    & lexeme
+  many Parser.letter
+  & fmap Text.pack
+  & lexeme
 
 
 typeDecl :: Parser TypeDecl
 typeDecl =
-    TypeDecl
-        <$> (string "type" *> typeName)
-        <*> ( do Parser.char '='
-                 many space
-                 lexeme (many field)
-            )
+  TypeDecl
+      <$> (string "type" *> typeName)
+      <*> ( do Parser.char '='
+               many space
+               lexeme (many field)
+          )
 
 
 field :: Parser (String, TypeRep)
 field = do
-    result <- (,) <$> (string "\n " *> word) <*> (string ":" *> typeRep)
-    many space
-    pure result
+  result <- (,) <$> (string "\n " *> word) <*> (string ":" *> typeRep)
+  many space
+  pure result
 
 
 data TypeRep
-    = TString
-    | TBool
-    | TInt
-    | TFloat
-    | TMaybe TypeRep
-    | TList TypeRep
-    deriving Show
+  = TString
+  | TBool
+  | TInt
+  | TFloat
+  | TMaybe TypeRep
+  | TList TypeRep
+  deriving Show
 
 
 typeRep :: Parser TypeRep
 typeRep =
-    oneOf
-    [ fmap (const TString) (symbol "String")
-    , fmap (const TBool) (symbol "Bool")
-    , fmap (const TInt) (symbol "Int")
-    , fmap (const TFloat) (symbol "Float")
-    , fmap TMaybe (string "Maybe " *> typeRep)
-    , fmap TList (string "List " *> typeRep)
-    ]
+  oneOf
+  [ fmap (const TString) (symbol "String")
+  , fmap (const TBool) (symbol "Bool")
+  , fmap (const TInt) (symbol "Int")
+  , fmap (const TFloat) (symbol "Float")
+  , fmap TMaybe (string "Maybe " *> typeRep)
+  , fmap TList (string "List " *> typeRep)
+  ]
 
 
 string :: String -> Parser String
 string str =
-    symbol str
-    & lexeme
+  symbol str
+  & lexeme
 
 
 symbol :: String -> Parser String
 symbol str =
-    Parser.string str
+  Parser.string str
 
 
 lexeme :: Parser a -> Parser a
 lexeme parser =
-    parser <* many (fmap void space <|> Parser.endOfLine)
+  parser <* many (fmap void space <|> Parser.endOfLine)
 
 
 space :: Parser ()
 space =
-    oneOf [ Parser.char ' ', Parser.char '\t' ]
-    & fmap void
+  oneOf [ Parser.char ' ', Parser.char '\t' ]
+  & fmap void
 
 
 many :: Parser a -> Parser (List a)
 many =
-    Parser.many'
+  Parser.many'
 
 
 oneOf :: List (Parser a) -> Parser a
 oneOf =
-    Parser.choice
+  Parser.choice
 
 
 -- PRELUDE
 
 
 type String
-    = Text.Text
+  = Text.Text
 
 
 foldl =
-    Prelude.foldl
+  Prelude.foldl
 
 
 type List a
-    = [a]
+  = [a]
 
 
 void =
-    const ()
+  const ()
 
 
 const =
-    Prelude.const
+  Prelude.const
 
 
 fmap =
-    Prelude.fmap
+  Prelude.fmap
 
 
 print =
-    Prelude.print
+  Prelude.print
 
 
 map =
-    Prelude.map
+  Prelude.map
 
 
 ($) =
-    (Prelude.$)
+  (Prelude.$)
 
 
 (.) =
-    (Prelude..)
+  (Prelude..)
 
 
 error =
-    Prelude.error
+  Prelude.error
 
 
 pure =
-    Prelude.return
+  Prelude.return
 
 
 type FilePath
-    = Prelude.FilePath
+  = Prelude.FilePath
 
 
 singleton x =
-    [x]
+  [x]
+
+
+head xs =
+  case xs of
+      [] -> Nothing
+      ( x : _ ) -> Just x
+
+
+(/=) =
+  (Prelude./=)
+
+
+(==) =
+    (Prelude.==)
 
 
 toLowercase str =
