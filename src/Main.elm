@@ -20,18 +20,21 @@ import Material.Theme as Theme
 import Material.Toolbar as Toolbar
 import Material.Typography as Typography
 import Navigation exposing (Location)
-import Ncms.Github as Github
 import Ncms.Backend as Backend
+import Ncms.Github as Github
 import Regex
 import Task
 import Task exposing (Task)
 
 import Api
+import Page exposing (Page, ApiId(..), DataId(..))
+import Pages.Edit
+import Pages.Listing
 import Value
 
 
 main =
-    Navigation.programWithFlags (Navigate << .hash)
+    Navigation.programWithFlags (Navigate << Page.fromHash << .hash)
     { init = init
     , subscriptions = subscriptions
     , update = update
@@ -45,6 +48,9 @@ type alias Model =
     , error : Maybe Http.Error
     , page : Page
 
+    , edit : Pages.Edit.Model
+    , listing : Pages.Listing.Model
+
     , clientId : String
     , clientSecret : String
     , auth : Maybe { code : String, state : String }
@@ -52,7 +58,7 @@ type alias Model =
     , user : Maybe Github.User
     , loginProcess : Bool
 
-    , queue : List (Cmd Msg)
+    , queue : List (String -> Cmd Msg)
 
     , repo : String
     , branch : String
@@ -64,7 +70,10 @@ defaultModel =
     { mdl = Material.defaultModel
     , apis = Dict.empty
     , error = Nothing
-    , page = defaultPage
+    , page = Page.defaultPage
+
+    , edit = Pages.Edit.defaultModel
+    , listing = Pages.Listing.defaultModel
 
     , clientId = ""
     , clientSecret = ""
@@ -83,9 +92,11 @@ defaultModel =
 type Msg
     = Mdl (Material.Msg Msg)
 
-    | ApiMsg ApiId (ApiMsg Msg)
     | Error Http.Error
-    | Navigate String
+    | Navigate Page
+
+    | EditMsg ApiId (Pages.Edit.Msg Msg)
+    | ListingMsg ApiId (Pages.Listing.Msg Msg)
 
     | Login
     | InputClientId String
@@ -93,7 +104,7 @@ type Msg
     | Authenticate String
     | UserProfile Github.User
 
-    | Enqueue (List (Cmd Msg))
+    | Enqueue (String -> Cmd Msg)
 
 
 type alias ApiModel =
@@ -115,18 +126,6 @@ defaultApiModel =
     }
 
 
-type ApiMsg m
-    = List (List Value)
-    | Input String String
-    | ApiMdl (Material.Msg m)
-    | Get Value
-    | Save
-    | SaveOk Value
-    | Cancel
-    | Delete String
-    | DeleteOk
-
-
 init
   : { auth : Maybe { code : String
     , state : String }
@@ -139,7 +138,7 @@ init
 init flags location =
     let
         page =
-            fromHash location.hash
+            Page.fromHash location.hash
 
         model =
             { defaultModel
@@ -150,17 +149,10 @@ init flags location =
             , clientSecret = flags.clientSecret
             }
 
-        ( apiModel, apiEffects ) =
+        ( modelWithPage, apiEffects ) =
             pageInit model page
     in
-    ( { model
-        | apis =
-            case apiModel of
-                Just (apiId, apiModel) ->
-                    Dict.insert apiId apiModel model.apis
-                Nothing ->
-                    model.apis
-      }
+    ( modelWithPage
     ,
       Cmd.batch
       [
@@ -170,13 +162,14 @@ init flags location =
             ( Just accessToken, _ ) ->
                 Cmd.batch
                 [ enqueue
-                  [ Github.getUser accessToken
+                  ( \accessToken ->
+                    Github.getUser accessToken
                     |> Task.attempt (\ result ->
                         case result of
                           Ok user -> UserProfile user
                           Err error -> Error error
                        )
-                  ]
+                  )
                 ]
 
             ( Nothing, Just { code, state } ) ->
@@ -205,94 +198,52 @@ init flags location =
     )
 
 
-type ApiId =
-    ApiId String
-
-
-type DataId =
-    DataId String
-
-
-type Page
-    = Dashboard
-    | Listing ApiId
-    | Edit ApiId DataId
-    | New ApiId
-    | NotFound String
-
-
-defaultPage =
-    Dashboard
-
-
-fromHash hash =
-    case String.uncons hash of
-        Nothing ->
-            Dashboard
-        Just ('#', "") ->
-            Dashboard
-        Just ('#', rest) ->
-            case String.split "/" rest of
-                (api::"new"::_) ->
-                    New (ApiId api)
-                (api::"edit"::id::_) ->
-                    Edit (ApiId api) (DataId id)
-                (api::_) ->
-                    Listing (ApiId api)
-                _ ->
-                    NotFound hash
-        _ ->
-            NotFound hash
-
-toHash page =
-    case page of
-        Dashboard ->
-            ""
-        Listing (ApiId api) ->
-            "#" ++ api
-        New (ApiId api) ->
-            "#" ++ api ++ "/new"
-        Edit (ApiId api) (DataId id) ->
-            "#" ++ api ++ "/edit/" ++ id
-        NotFound hash ->
-            hash
-
-
-pageInit : Model -> Page -> (Maybe ( String, ApiModel ), Cmd Msg )
+pageInit : Model -> Page -> ( Model, Cmd Msg )
 pageInit model page =
     case page of
-        Listing (ApiId apiId) ->
+        Page.Listing (ApiId apiId) ->
             case Backend.lookup apiId Api.apis of
-                Just { list } ->
-                    ( Just (apiId, defaultApiModel)
-                    ,
-                      enqueue
-                      [ list (handle Error (List >> ApiMsg (ApiId apiId)))
-                          (Maybe.withDefault "" model.accessToken)
-                          "aforemny"
-                          "ncms"
-                      ]
-                    )
                 Nothing ->
-                    ( Just (apiId, defaultApiModel), Cmd.none )
+                    ( model, Cmd.none )
+                    -- ^ TODO
+                Just api ->
+                    let
+                        ( listing, effects ) =
+                            Pages.Listing.init (ListingMsg (ApiId apiId))
+                                (getPage model api)
+                    in
+                        ( { model | listing = listing }, effects )
 
-        Edit (ApiId apiId) (DataId id) ->
+        Page.Edit (ApiId apiId) id ->
             case Backend.lookup apiId Api.apis of
-                Just { get } ->
-                    ( Just (apiId, defaultApiModel)
-                    , 
-                      enqueue
-                      [ get (handle Error (Get >> ApiMsg (ApiId apiId)))
-                        (Maybe.withDefault "" model.accessToken)
-                        "aforemny"
-                        "ncms"
-                        id
-                      ]
-                    )
                 Nothing ->
-                    ( Just (apiId, defaultApiModel), Cmd.none )
+                    ( model, Cmd.none  )
+                    -- ^ TODO
+                Just api ->
+                    let
+                        ( edit, effects ) =
+                            Pages.Edit.init (EditMsg (ApiId apiId))
+                                (getPage model api)
+                                (Just id)
+                    in
+                        ( { model | edit = edit }, effects )
+
+        Page.New (ApiId apiId) ->
+            case Backend.lookup apiId Api.apis of
+                Nothing ->
+                    ( model, Cmd.none  )
+                    -- ^ TODO
+                Just api ->
+                    let
+                        ( edit, effects ) =
+                            Pages.Edit.init (EditMsg (ApiId apiId))
+                                (getPage model api)
+                                Nothing
+                    in
+                        ( { model | edit = edit }, effects )
+
         _ ->
-            ( Nothing, Cmd.none )
+            ( model, Cmd.none )
 
 
 subscriptions model =
@@ -314,25 +265,26 @@ port cacheClientCredentials : { clientId : String, clientSecret : String, redire
 port clearClientCredentials : () -> Cmd msg
 
 
-enqueue : List (Cmd Msg) -> Cmd Msg
+enqueue : (String -> Cmd Msg) -> Cmd Msg
 enqueue =
     Enqueue >> cmd
 
 
 cmd : Msg -> Cmd Msg
-cmd msg =
-    Task.perform identity (Task.succeed msg)
+cmd =
+    Task.perform identity << Task.succeed
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
 
-        Enqueue cmds ->
-            if model.accessToken == Nothing then
-                ( { model | queue = model.queue ++ cmds }, Cmd.none )
-            else
-                ( model, Cmd.batch cmds )
+        Enqueue cmd ->
+            case model.accessToken of
+                Nothing ->
+                    ( { model | queue = model.queue ++ [ cmd ] }, Cmd.none )
+                Just accessToken ->
+                    ( model, (cmd accessToken) )
 
         Mdl msg_ ->
             Material.update Mdl msg_ model
@@ -345,15 +297,16 @@ update msg model =
             ,
               Cmd.batch
               [ cacheAccessToken accessToken
-              , Cmd.batch model.queue
+              , Cmd.batch (List.map (\cmd -> cmd accessToken) model.queue)
               , enqueue
-                [ Github.getUser accessToken
+                ( \accessToken ->
+                  Github.getUser accessToken
                   |> Task.attempt (\ result ->
                       case result of
                         Ok user -> UserProfile user
                         Err error -> Error error
                      )
-                ]
+                )
               ]
             )
 
@@ -375,29 +328,20 @@ update msg model =
         InputClientSecret clientSecret ->
           ( { model | clientSecret = clientSecret }, Cmd.none )
 
-        Navigate hash ->
-            let
-                page =
-                    fromHash hash
-
-                ( apiModel, apiEffects ) =
-                    pageInit model page
-            in
+        Navigate page ->
             if model.page == page then
-                ( { model | page = page }, Cmd.none )
+                ( model, Cmd.none )
             else
-                ( { model
+                let
+                    ( modelWithPage, apiEffects ) =
+                        pageInit model page
+                in
+                ( { modelWithPage
                     | page = page
-                    , apis =
-                        case apiModel of
-                            Just (apiId, apiModel) ->
-                                Dict.insert apiId apiModel model.apis
-                            Nothing ->
-                                model.apis
                   }
                 ,
                   Cmd.batch
-                  [ Navigation.newUrl (if hash == "" then "#" else hash)
+                  [ Navigation.newUrl (Page.toHash page)
                   , apiEffects
                   ]
                 )
@@ -419,88 +363,37 @@ update msg model =
                   Cmd.none
             )
 
-        ApiMsg (ApiId apiId) msg_ ->
+        EditMsg (ApiId apiId) msg_ ->
             case Backend.lookup apiId Api.apis of
+                Nothing ->
+                    ( model, Cmd.none )
+                    -- ^ TODO: error
+
                 Just api ->
                     let
-                        ( apiModel_, effects ) =
-                            apiUpdate (Maybe.withDefault "" model.accessToken) api (ApiMsg (ApiId apiId)) msg_ apiModel
-
-                        apiModel =
-                            Dict.get apiId model.apis
-                            |> Maybe.withDefault defaultApiModel
+                        ( edit, effects ) =
+                            Pages.Edit.update (EditMsg (ApiId apiId))
+                                ( getPage model api )
+                                msg_
+                                model.edit
                     in
-                    ( { model | apis = Dict.insert apiId apiModel_ model.apis },
-                      effects
-                    )
+                    ( { model | edit = edit }, effects )
 
+        ListingMsg (ApiId apiId) msg_ ->
+            case Backend.lookup apiId Api.apis of
                 Nothing ->
-                    Debug.crash "no api"
+                    ( model, Cmd.none )
+                    -- ^ TODO: error
 
-
-apiUpdate
-    : String
-    -> Backend.Rest Msg
-    -> (ApiMsg Msg -> Msg)
-    -> ApiMsg Msg
-    -> ApiModel
-    -> ( ApiModel, Cmd Msg )
-apiUpdate accessToken { tipe, delete, get, list, update, create } lift msg model =
-    let
-        id value =
-            "" -- TODO
-
-        handle_ f =
-            handle Error (f >> lift)
-    in
-    case msg of
-        Cancel ->
-            ( model, Navigation.back 1 )
-
-        List values ->
-            ( { model | values = values }, Cmd.none )
-
-        (Get value) ->
-            ( { model
-                | inputs = Backend.toInputs tipe value
-                , value = value
-              }
-            ,
-              Cmd.none
-            )
-
-        (Delete id) ->
-            ( model, enqueue [ delete (handle_ (\_ -> DeleteOk)) accessToken "aforemny" "ncms" id ] )
-
-        DeleteOk ->
-            ( model, enqueue [ list (handle_ List) accessToken "aforemny" "ncms" ] )
-
-        (Input fieldName fieldValue) ->
-            ( { model | inputs = Dict.insert fieldName fieldValue model.inputs }, Cmd.none )
-
-        (ApiMdl msg_) ->
-            Material.update (ApiMdl >> lift) msg_ model
-
-        Save ->
-            let
-                value =
-                    Backend.toValue tipe model.inputs
-            in
-            ( { model
-                | value = value
-                , inputs = Dict.empty
-              }
-            ,
-              enqueue
-              [ create (handle_ SaveOk) accessToken "aforemny" "ncms" value
-              ]
-            )
-
-        SaveOk value ->
-            ( model
-            ,
-              Task.perform (\ _ -> (Navigate (toHash (Listing (ApiId tipe.name))))) (Task.succeed ())
-            )
+                Just api ->
+                    let
+                        ( listing, effects ) =
+                            Pages.Listing.update (ListingMsg (ApiId apiId))
+                                ( getPage model api )
+                                msg_
+                                model.listing
+                    in
+                    ( { model | listing = listing }, effects )
 
 
 handle fail succeed result =
@@ -530,9 +423,9 @@ view model =
 
           , Lists.ul []
             [ Lists.li
-              [ Options.onClick (Navigate (toHash Dashboard))
+              [ Options.onClick (Navigate Page.Dashboard)
               , css "cursor" "pointer"
-              , when ( model.page == Dashboard ) <|
+              , when ( model.page == Page.Dashboard ) <|
                 css "background-color" "#ccc"
               ]
               [ Lists.text
@@ -552,9 +445,9 @@ view model =
             ( Api.apis
               |> List.map (\ { tipe } ->
                    Lists.li
-                   [ Options.onClick (Navigate (toHash (Listing (ApiId tipe.name))))
+                   [ Options.onClick (Navigate (Page.Listing (ApiId tipe.name)))
                    , css "cursor" "pointer"
-                   , when ( model.page == Listing (ApiId tipe.name) ) <|
+                   , when ( model.page == Page.Listing (ApiId tipe.name) ) <|
                      css "background-color" "#ccc"
                    ]
                    [ Lists.text
@@ -574,7 +467,7 @@ view model =
       , css "flex-flow" "column"
       , css "flex-grow" "1"
       ]
-      [ Toolbar.view []
+      [ Toolbar.render Mdl [0] model.mdl []
         [ Toolbar.row []
           [ Toolbar.title []
             [ text "ncms"
@@ -637,7 +530,7 @@ view model =
         [ css "padding-left" "36px"
         ]
         [ case model.page of
-              Dashboard ->
+              Page.Dashboard ->
                   Html.div []
                   [
                     styled Html.h1 [ Typography.title ] [ text "Dashboard" ]
@@ -699,7 +592,7 @@ view model =
                             ]
                   ]
 
-              New (ApiId apiId) ->
+              Page.New (ApiId apiId) ->
 
                   let
                       api =
@@ -712,12 +605,12 @@ view model =
                                   Dict.get tipe.name model.apis
                                   |> Maybe.withDefault defaultApiModel
                           in
-                          editView True (ApiMsg (ApiId tipe.name)) tipe apiModel
+                          Pages.Edit.view True (EditMsg (ApiId tipe.name)) tipe model.edit
 
                       Nothing ->
                           text "api not found"
 
-              Edit (ApiId apiId) (DataId objId) ->
+              Page.Edit (ApiId apiId) (DataId objId) ->
                   case Backend.lookup apiId Api.apis of
                       Just { tipe } ->
                           let
@@ -725,12 +618,12 @@ view model =
                                   Dict.get tipe.name model.apis
                                   |> Maybe.withDefault defaultApiModel
                           in
-                          editView False (ApiMsg (ApiId tipe.name)) tipe apiModel
+                          Pages.Edit.view False (EditMsg (ApiId tipe.name)) tipe model.edit
 
                       Nothing ->
                           text "api not found"
 
-              Listing (ApiId apiId) ->
+              Page.Listing (ApiId apiId) ->
                   case Backend.lookup apiId Api.apis of
                       Just { tipe } ->
                           let
@@ -738,12 +631,12 @@ view model =
                                   Dict.get tipe.name model.apis
                                   |> Maybe.withDefault defaultApiModel
                           in
-                          listingView (ApiMsg (ApiId tipe.name)) tipe apiModel
+                          Pages.Listing.view (ListingMsg (ApiId tipe.name)) { navigate = Navigate } tipe model.listing
 
                       Nothing ->
                           text "api not found"
 
-              NotFound _ ->
+              Page.NotFound _ ->
                   Html.div []
                   [ text "404"
                   ]
@@ -753,278 +646,79 @@ view model =
     |> Material.top
 
 
-listingView lift tipe model =
-  let
-      rowStyle =
-          [ cs "row"
-          , css "display" "flex"
-          , css "flex-flow" "row"
-          , css "flex" "1 1 auto"
-          ]
+--getPage :
+--    Model
+--    -> Backend.Rest Value
+--    -> { tipe : Backend.Tipe
+--       , error : Http.Error -> msg
+--       , create : (Result Http.Error Value -> msg) -> Value -> Cmd msg
+--       , delete : (Result Http.Error () -> msg) -> String -> Cmd msg
+--       , get : (Result Http.Error Value -> msg) -> String -> Cmd msg
+--       , list : (Result Http.Error (List Value) -> msg) -> Cmd msg
+--       , update : (Result Http.Error Value -> msg) -> Value -> Cmd msg
+--       }
+getPage model api =
+    let
+      owner =
+          "aforemny"
 
-      listingType { name, idField, fields } =
-           Html.div []
-           [ Card.view
-             [ css "width" "1200px"
-             , css "max-width" "100%"
-             ]
-             [ Card.primary []
-               [
-                 Card.title [ Card.large ] [ text (tipe.name ++ " listing") ]
-               ]
+      repo =
+          "ncms"
 
-             , Card.supportingText []
-               [ listingFields ( idField :: fields )
-               ]
+      tipe = api.tipe
 
-             , Card.actions []
-               [ Button.render (ApiMdl >> lift) [0,1,2,3] model.mdl
-                 [ Options.onClick (Navigate (toHash (New (ApiId tipe.name))))
-                 , Button.accent
-                 ]
-                 [ text "New"
-                 ]
-               ]
-             ]
-           ]
+      error = Error
 
-      listingFields fields =
-           Lists.ul []
-           ( List.concat
-             [
-               [ fieldsRow Nothing
-                 [ css "color" "#ccc"
-                 ] <|
-                 List.map .name fields
-               , Lists.divider [] []
-               ]
+      create cont value =
+          let
+              f accessToken =
+                  api.create cont accessToken owner repo value
+          in
+          model.accessToken
+          |> Maybe.map f
+          |> Maybe.withDefault (enqueue f)
 
-             , model.values
-               |> List.map (\ value ->
-                      let
-                          id =
-                              case Value.expose value of
-                                  Value.Object obj ->
-                                      Dict.get tipe.idField.name obj
-                                      |> Maybe.map (\ v ->
-                                            case v of
-                                                Value.String str -> str
-                                                _ -> ""
-                                         )
-                                      |> Maybe.withDefault ""
-                                  _ ->
-                                      ""
-                      in
-                      fieldsRow (Just id) [] (fromValue fields (Value.expose value))
-                  )
-             ]
-           )
+      update cont value =
+          let
+              f accessToken =
+                  api.update cont accessToken owner repo value
+          in
+          model.accessToken
+          |> Maybe.map f
+          |> Maybe.withDefault (enqueue f)
 
-      fieldsRow id options strs =
-           let
-               columnWidth =
-                   toString (100 / toFloat (1 + List.length strs)) ++ "%"
-           in
-           Lists.li options
-           [ Lists.text rowStyle <|
-             List.concat
-             [
-               strs
-               |> List.map (\ str ->
-                      styled Html.div
-                      [ css "width" columnWidth
-                      ]
-                      [ text str
-                      ]
-                 )
-             , [ styled Html.div
-                  [ css "display" "flex"
-                  , css "flex-flow" "row"
-                  , css "width" columnWidth
-                  ]
-                  [ styled Html.i
-                    [ case id of
-                          Just id ->
-                              Options.onClick (Navigate (toHash (Edit (ApiId tipe.name) (DataId id))))
-                          Nothing ->
-                              Options.nop
-                    , cs "material-icons"
-                    ]
-                    [ text "edit"
-                    ]
-                  , styled Html.i
-                    [ case id of
-                          Just id ->
-                              Options.onClick (lift (Delete id))
-                          Nothing ->
-                              Options.nop
-                    , cs "material-icons"
-                    ]
-                    [ text "delete"
-                    ]
-                  ]
-               ]
-             ]
-           ]
+      delete cont id =
+          let
+              f accessToken =
+                  api.delete cont accessToken owner repo id
+          in
+          model.accessToken
+          |> Maybe.map f
+          |> Maybe.withDefault (enqueue f)
 
-      fromValue fields value =
-          fields
-          |> List.map (\ { name } ->
-                case value of
-                    Value.Object kvs ->
-                        Dict.get name kvs
-                        |> Maybe.map (\ v ->
-                               case v of
-                                  Value.Null ->
-                                      "null"
-                                  Value.Bool bool ->
-                                      toString bool
-                                  Value.String str ->
-                                      str
-                                  Value.Number num ->
-                                      toString num
-                                  _ ->
-                                      toString v
-                           )
-                        |> Maybe.withDefault ""
+      get cont id =
+          let
+              f accessToken =
+                  api.get cont accessToken owner repo id
+          in
+          model.accessToken
+          |> Maybe.map f
+          |> Maybe.withDefault (enqueue f)
 
-                    _ ->
-                        ""
-             )
-  in
-  Html.div
-  [ Html.style
-    [ ("font-size", "16px")
-    , ("padding", "32px")
-    ]
-  ]
-  [ listingType tipe
-  ]
-
-
-editView isCreate lift { name, idField, fields } model =
-  Html.div
-  [ Html.style
-    [ ("font-size", "16px")
-    , ("padding", "32px")
-    ]
-  ]
-  [
-    styled Html.h1 [ Typography.title ] [ text name ]
-
-  , Card.view []
-    [ Card.primary []
-      [
-        styled Html.div []
-        ( ( idField :: fields )
-          |> List.concat << List.indexedMap (\ i field ->
-              [ Html.label []
-                [ text field.name
-                ]
-              , case field.tipe of
-                    Backend.Bool ->
-                        styled Html.div
-                        [ css "display" "block"
-                        , css "margin-bottom" "32px"
-                        ]
-                        [
-                          styled Html.div [ cs "mdc-form-field" ]
-                          [ let
-                              value =
-                                  Dict.get field.name model.inputs
-                                  |> Maybe.withDefault
-                                     ( case Value.expose model.value of
-                                           (Value.Object obj) ->
-                                               case Dict.get field.name obj of
-                                                   Just Value.Null ->
-                                                      ""
-                                                   Just (Value.Bool v) ->
-                                                      toString v
-                                                   Just (Value.String v) ->
-                                                      ""
-                                                   Just (Value.Number v) ->
-                                                      ""
-                                                   Just (Value.List vs) ->
-                                                      ""
-                                                   Just (Value.Object obj) ->
-                                                      ""
-                                                   Nothing ->
-                                                       ""
-                                           _ ->
-                                               ""
-                                     )
-                            in
-                            Checkbox.render (ApiMdl >> lift) [1,0,i] model.mdl
-                            [
-                              Options.onClick <| lift << Input field.name <|
-                              if value == "True" then "False" else "True"
-
-                            , if value == "True" then
-                                  Checkbox.checked
-                              else
-                                  Options.nop
-                            ]
-                            []
-
-                          , Html.label
-                            [
-                            ]
-                            [ text "True" ]
-                          ]
-                        ]
-                    Backend.String ->
-                        Textfield.render (ApiMdl >> lift) [1,0,i] model.mdl
-                            [ Options.onInput (Input field.name >> lift)
-                            , Textfield.value
-                                ( Dict.get field.name model.inputs
-                                  |> Maybe.withDefault
-                                     ( case Value.expose model.value of
-                                           (Value.Object obj) ->
-                                               case Dict.get field.name obj of
-                                                   Just Value.Null ->
-                                                      ""
-                                                   Just (Value.Bool v) ->
-                                                      toString v
-                                                   Just (Value.String v) ->
-                                                      v
-                                                   Just (Value.Number v) ->
-                                                      toString v
-                                                   Just (Value.List vs) ->
-                                                      toString vs
-                                                   Just (Value.Object obj) ->
-                                                      toString obj
-                                                   Nothing ->
-                                                       ""
-                                           _ ->
-                                               ""
-                                     )
-                                )
-                            , Textfield.fullWidth
-                            , css "margin-bottom" "32px"
-                            , when ( ( field.name == idField.name ) && not isCreate) <|
-                              Textfield.disabled
-                            ]
-                            []
-              ]
-            )
-        )
-      ]
-
-    , Card.actions
-      [ css "display" "flex"
-      , css "flex-flow" "row-reverse"
-      ]
-      [ Button.render (ApiMdl >> lift) [1,1,0] model.mdl
-        [ Options.onClick (lift Save)
-        , Button.primary
-        ]
-        [ text "Save"
-        ]
-      , Button.render (ApiMdl >> lift) [1,1,0] model.mdl
-        [ Options.onClick (lift Cancel)
-        ]
-        [ text "Cancel"
-        ]
-      ]
-    ]
-  ]
+      list cont =
+          let
+              f accessToken =
+                  api.list cont accessToken owner repo
+          in
+          model.accessToken
+          |> Maybe.map f
+          |> Maybe.withDefault (enqueue f)
+    in
+    { tipe = tipe
+    , error = error
+    , create = create
+    , update = update
+    , delete = delete
+    , get = get
+    , list = list
+    }
