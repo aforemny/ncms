@@ -518,11 +518,21 @@ elmApi modName (Module (ApiDecl kind type_ idField) types _) =
                   error "unsupported kind"
 
       delete =
-          Text.unlines
-          [ "delete : (Result Error () -> msg) -> String -> String -> String -> String -> Cmd msg"
-          , "delete ="
-          , "    Backend.delete \"" + endpoint + "\" encode" + type_ + " " + toLowercase type_ + "Decoder"
-          ]
+          case kind of
+              "ncms" ->
+                  Text.unlines
+                  [ "delete : (Result Error () -> msg) -> " + showTypeRep indexTypeRep + " -> Cmd msg"
+                  , "delete ="
+                  , "    Backend.delete \"" + endpoint + "\" encode" + type_ + " " + toLowercase type_ + "Decoder"
+                  ]
+              "github" ->
+                  Text.unlines
+                  [ "delete : (Result Error () -> msg) -> String -> String -> String -> " + showTypeRep indexTypeRep + " -> Cmd msg"
+                  , "delete ="
+                  , "    Backend.delete \"" + endpoint + "\" encode" + type_ + " " + toLowercase type_ + "Decoder"
+                  ]
+              _ ->
+                  error "unsupported kind"
 
       update =
           case kind of
