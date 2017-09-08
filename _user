@@ -1,5 +1,7 @@
-rest_api of type User indexed on username:
+rest_api of type User indexed on string:
 
 type User =
-    username : String
-    email : String
+    string : String
+    bool : Bool
+    int : Int
+    float : Float

@@ -168,7 +168,8 @@ view isCreate lift { name, idField, fields } model =
                           , Html.label
                             [
                             ]
-                            [ text "True" ]
+                            [ text field.name
+                            ]
                           ]
                         ]
                     Backend.String ->

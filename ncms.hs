@@ -235,21 +235,32 @@ verify (TypeDecl typeName fields) value =
         Aeson.Object obj ->
             let
                 typechecks =
-                    obj
-                    & HashMap.mapWithKey typecheck
-                    & HashMap.foldl' (Prelude.&&) True
-
-                typecheck key value =
-                    case Prelude.lookup key fields of
-                        Just typeRep ->
-                            unifies typeRep value
-                        Nothing ->
-                            False
-
-                complete =
                     fields
-                    & map (Prelude.flip HashMap.member obj . Prelude.fst)
+                    & map (\ ( fieldName, typeRep ) ->
+                        let
+                            value =
+                                HashMap.lookup fieldName obj
+                                & Maybe.maybe (defaultValue typeRep) Prelude.id
+                        in
+                          unifies typeRep value
+                      )
                     & Prelude.foldl (Prelude.&&) True
+
+                defaultValue :: TypeRep -> Aeson.Value
+                defaultValue typeRep =
+                    case typeRep of
+                        TString ->
+                            Aeson.String ""
+                        TBool ->
+                            Aeson.Bool False
+                        TInt ->
+                            Aeson.Number 0
+                        TFloat ->
+                            Aeson.Number 0
+                        TMaybe _ ->
+                            Aeson.Null
+                        TList _ ->
+                            Aeson.Array (Vector.empty)
 
                 unifies typeRep value =
                     case (typeRep, value) of
@@ -278,9 +289,8 @@ verify (TypeDecl typeName fields) value =
 
                         _ ->
                             False
-
             in
-            if typechecks Prelude.&& complete then
+            if typechecks then
                 Just obj
             else
                 Nothing

@@ -29,7 +29,7 @@ get =
 
 update : User -> Task Error ()
 update =
-    Backend.create "user" encodeUser userDecoder .username
+    Backend.create "user" encodeUser userDecoder .string
 
 
 delete : String -> Task Error ()
@@ -44,7 +44,7 @@ list =
 
 create : User -> Task Error ()
 create =
-    Backend.create "user" encodeUser userDecoder .username
+    Backend.create "user" encodeUser userDecoder .string
 
 
 
@@ -52,16 +52,20 @@ create =
 
 
 type alias User =
-    { username : String
-    , email : String
+    { string : String
+    , bool : Bool
+    , int : Int
+    , float : Float
     }
 
 
 
 defaultUser : User
 defaultUser =
-    { username = ""
-    , email = ""
+    { string = ""
+    , bool = False
+    , int = -1
+    , float = 0.0
     }
 
 
@@ -71,9 +75,11 @@ defaultUser =
 
 userDecoder : Decoder User
 userDecoder =
-    Decode.map2 User
-        ( Decode.at [ "username" ] Decode.string )
-        ( Decode.at [ "email" ] Decode.string )
+    Decode.map4 User
+        ( Decode.at [ "string" ] Decode.string )
+        ( Decode.at [ "bool" ] Decode.bool )
+        ( Decode.at [ "int" ] Decode.int )
+        ( Decode.at [ "float" ] Decode.float )
 
 
 
@@ -83,8 +89,10 @@ userDecoder =
 
 encodeUser : User -> Decode.Value
 encodeUser value =
-    [ ( "username", Encode.string value.username )
-    , ( "email", Encode.string value.email )
+    [ ( "string", Encode.string value.string )
+    , ( "bool", Encode.bool value.bool )
+    , ( "int", Encode.int value.int )
+    , ( "float", Encode.float value.float )
     ]
     |> Encode.object
 

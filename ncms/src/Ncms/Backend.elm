@@ -56,8 +56,14 @@ toInputs { name, idField, fields } value =
                         "True"
                     else
                         "False"
-                _ ->
-                    toString v
+                Value.Null ->
+                    ""
+                Value.Number num ->
+                    Basics.toString num
+                Value.List xs ->
+                    "[]"
+                Value.Object _ ->
+                    "{}"
     in
     case Value.expose value of
         Value.Object obj ->
@@ -92,13 +98,13 @@ toValue { idField, fields } inputs =
                  Int ->
                      case input of
                          Just string ->
-                             Encode.int 42
+                             Encode.int (Result.withDefault 0 (String.toInt string))
                          Nothing ->
                              Encode.int 0
                  Float ->
                      case input of
                          Just string ->
-                             Encode.float 9.99
+                             Encode.float (Result.withDefault 0 (String.toFloat string))
                          Nothing ->
                              Encode.float 0
            )
