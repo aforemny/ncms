@@ -32,10 +32,6 @@ import System.IO.Unsafe
 
 
 main = do
-    let
-        debug =
-            Snap.writeText . Text.pack . show
-
     apiFiles <-
         liftIO (findFiles ".")
         & fmap (map (\ fp -> Prelude.drop 2 fp))
@@ -52,7 +48,7 @@ main = do
     modules <-
         forM apiFiles $ \ apiFile -> do
             parsedApiFile <- fmap parse (readFile apiFile)
-            case parsedApiFile of
+            case debug "parsedApiFile" parsedApiFile of
                 Right parsedApiFile ->
                     return parsedApiFile
                 Left e ->
@@ -71,9 +67,6 @@ main = do
         writeFile fp (elmApi moduleName mod_)
 
     writeFile "src/Api.elm" (elmApis modules)
-
-    let
-        _users = error "_users"
 
     let
         apiRoutes =
@@ -387,7 +380,7 @@ elmApis modules =
     , "\n"
     , "-- API"
     , "\n"
-    , modules
+    , debug "modules" modules
       & map (\ (Module (ApiDecl kind type_ idField) types _) ->
           let
               endpoint =
@@ -430,10 +423,9 @@ elmApis modules =
                                   "Int"
                               TFloat ->
                                   "Float"
-                              -- TMaybe TypeRep
+                              TMaybe typeRep' ->
+                                  "Maybe (" + makePrim typeRep' + ")"
                               -- TList TypeRep
-                              _ ->
-                                  "String"
                   in
                   [ "name = \"" + typeName + "\""
                   , "idField = \n" + makeField idField
@@ -1056,5 +1048,5 @@ toLowercase str =
 
 
 debug s x =
-    unsafePerformIO (Prelude.putStrLn (s Prelude.++ show x))
+    unsafePerformIO (Prelude.putStrLn (s Prelude.++ ": " Prelude.++ show x))
         `Prelude.seq` x

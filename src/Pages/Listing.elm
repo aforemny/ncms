@@ -63,7 +63,7 @@ update
     -> Model
     -> ( Model, Cmd msg )
 update lift { tipe, delete, list, error } msg model =
-    case msg of
+    case Debug.log "Msg" msg of
         Mdl msg_ ->
             Material.update (Mdl >> lift) msg_ model
 
@@ -158,7 +158,7 @@ view lift { navigate } tipe model =
                |> List.map (\ value ->
                       let
                           id =
-                              case Value.expose value of
+                              case Debug.log "EXPOSE" <| Value.expose (Debug.log "VALUE" value) of
                                   Value.Object obj ->
                                       Dict.get tipe.idField.name obj
                                       |> Maybe.map (\ v ->
@@ -225,27 +225,39 @@ view lift { navigate } tipe model =
 
       fromValue fields value =
           fields
-          |> List.map (\ { name } ->
+          |> List.map (\ { name, tipe } ->
                 case value of
                     Value.Object kvs ->
-                        Dict.get name kvs
-                        |> Maybe.map (\ v ->
-                               case v of
-                                  Value.Null ->
-                                      "null"
-                                  Value.Bool bool ->
-                                      toString bool
-                                  Value.String str ->
-                                      str
-                                  Value.Number num ->
-                                      toString num
-                                  _ ->
-                                      toString v
-                           )
-                        |> Maybe.withDefault ""
+                        let
+                           f tipe value =
+                              case Debug.log "tipe, value" ( tipe, value ) of
+                                 ( Backend.String, Just (Value.String string)) ->
+                                     string
+                                 ( Backend.String, _) ->
+                                     ""
+                                 ( Backend.Bool, Just (Value.Bool bool)) ->
+                                     toString bool
+                                 ( Backend.Bool, _ ) ->
+                                     "False"
+                                 ( Backend.Int, Just (Value.Number number) ) ->
+                                     toString number
+                                 ( Backend.Int, _ ) ->
+                                     "0"
+                                 ( Backend.Float, Just (Value.Number number) ) -> 
+                                     toString number
+                                 ( Backend.Float, _ ) ->
+                                     "0"
+                                 ( Backend.Maybe _, Just Value.Null ) ->
+                                     "–"
+                                 ( Backend.Maybe tipe_, Just _ ) ->
+                                     f tipe_ value
+                                 ( Backend.Maybe _, _ ) ->
+                                     "–"
+                        in
+                        f tipe (Dict.get name kvs)
 
                     _ ->
-                        ""
+                        toString value
              )
   in
   Html.div

@@ -33,6 +33,18 @@ apis =
         ,              { name = "float"
               , tipe = Float
               }
+        ,              { name = "maybeString"
+              , tipe = Maybe (String)
+              }
+        ,              { name = "maybeBool"
+              , tipe = Maybe (Bool)
+              }
+        ,              { name = "maybeInt"
+              , tipe = Maybe (Int)
+              }
+        ,              { name = "maybeFloat"
+              , tipe = Maybe (Float)
+              }
               ]
           }
     , get = Backend.get "user" identity Json.value

@@ -29,7 +29,7 @@ import Value
 
 type alias Model =
     { mdl : Material.Model
-    , inputs : Dict String String
+    , inputs : Dict String Value.Value
     }
 
 
@@ -45,7 +45,7 @@ type Msg msg
     | Cancel
     | Save
     | SaveOk
-    | Input String String
+    | Input String Value.Value
     | Get Value
 
 
@@ -131,88 +131,164 @@ view isCreate lift { name, idField, fields } model =
   [
     styled Html.h1 [ Typography.title ] [ text name ]
 
-  , Card.view []
+  , let
+        renderField : Int -> { name : String, tipe : Backend.Prim } -> Maybe Value.Value -> List (Html msg)
+        renderField i field value =
+            [ Html.label []
+              [ text field.name
+              ]
+            , case field.tipe of
+                  Backend.Bool ->
+                      styled Html.div [ css "display" "block"
+                      , css "margin-bottom" "32px"
+                      ]
+                      [
+                        styled Html.div [ cs "mdc-form-field" ]
+                        [ 
+                          Checkbox.render (Mdl >> lift) [1,0,i] model.mdl
+                          [
+                            Options.onClick <| lift << Input field.name <|
+                            case value of
+                                Just (Value.Bool bool) ->
+                                    Value.Bool (not bool)
+                                _ ->
+                                    Value.Bool True
+
+                          , if value == Just (Value.Bool True) then
+                                Checkbox.checked
+                            else
+                                Options.nop
+                          ]
+                          []
+
+                        , Html.label
+                          [
+                          ]
+                          [ text field.name
+                          ]
+                        ]
+                      ]
+                  Backend.String ->
+                      Textfield.render (Mdl >> lift) [1,0,i] model.mdl
+                          [ Options.onInput (lift << Input field.name << Value.String)
+                          , Textfield.value
+                              ( case value of
+                                    Just (Value.String string) ->
+                                        string
+                                    _ ->
+                                        ""
+                              )
+                          , when ( ( field.name == idField.name ) && not isCreate) <|
+                            Textfield.disabled
+                          , Textfield.fullWidth
+                          , css "margin-bottom" "32px"
+                          ]
+                          []
+                  Backend.Int ->
+                      Textfield.render (Mdl >> lift) [1,0,i] model.mdl
+                          [ Options.onInput (lift << Input field.name << Value.Number << toFloat << Result.withDefault 0 << String.toInt)
+                          , Textfield.value
+                              ( case value of
+                                    Just (Value.Number number) ->
+                                        if number == toFloat (floor number) then
+                                            toString (floor number)
+                                        else
+                                            "0"
+                                    _ ->
+                                        "0"
+                              )
+                          , when ( ( field.name == idField.name ) && not isCreate) <|
+                            Textfield.disabled
+                          , Textfield.fullWidth
+                          , css "margin-bottom" "32px"
+                          ]
+                          []
+                  Backend.Float ->
+                      Textfield.render (Mdl >> lift) [1,0,i] model.mdl
+                          [ Options.onInput (lift << Input field.name << Value.Number << Result.withDefault 0 << String.toFloat)
+                          , Textfield.value
+                              ( case value of
+                                    Just (Value.Number number) ->
+                                        toString number
+                                    _ ->
+                                        "0"
+                              )
+                          , when ( ( field.name == idField.name ) && not isCreate) <|
+                            Textfield.disabled
+                          , Textfield.fullWidth
+                          , css "margin-bottom" "32px"
+                          ]
+                          []
+                  Backend.Maybe tipe_ ->
+                      let
+                          defaultValue tipe =
+                              case tipe of
+                                  Backend.String ->
+                                      Value.String ""
+                                  Backend.Bool ->
+                                      Value.Bool False
+                                  Backend.Int ->
+                                      Value.Number 0
+                                  Backend.Float ->
+                                      Value.Number 0
+                                  Backend.Maybe tipe_ ->
+                                      defaultValue tipe_
+                      in
+                      styled Html.div [ css "display" "block"
+                      , css "margin-bottom" "32px"
+                      ]
+                      [
+                        styled Html.div [ cs "mdc-form-field" ]
+                        [ 
+                          Checkbox.render (Mdl >> lift) [1,0,i] model.mdl
+                          [
+                            Options.onClick <| lift << Input field.name <|
+                            case value of
+                                Just Value.Null ->
+                                    defaultValue tipe_
+                                Just value_ ->
+                                    Value.Null
+                                _ ->
+                                    defaultValue tipe_
+                          , case value of
+                                Just Value.Null ->
+                                    Options.nop
+                                Just _ ->
+                                    Checkbox.checked
+                                _ ->
+                                    Options.nop
+                          ]
+                          []
+
+                        , Html.label []
+                          ( case value of
+                                Just Value.Null ->
+                                    [ text field.name
+                                    ]
+                                Just value_ ->
+                                    renderField i
+                                        { name = field.name, tipe = tipe_ }
+                                        (Just value_)
+                                _ ->
+                                    [ text field.name
+                                    ]
+                          )
+                        ]
+                      ]
+            ]
+    in
+    Card.view []
     [ Card.primary []
       [
         styled Html.div []
         ( ( idField :: fields )
           |> List.concat << List.indexedMap (\ i field ->
-              [ Html.label []
-                [ text field.name
-                ]
-              , case field.tipe of
-                    Backend.Bool ->
-                        styled Html.div
-                        [ css "display" "block"
-                        , css "margin-bottom" "32px"
-                        ]
-                        [
-                          styled Html.div [ cs "mdc-form-field" ]
-                          [ let
-                              value =
-                                  Dict.get field.name model.inputs
-                                  |> Maybe.withDefault ""
-                            in
-                            Checkbox.render (Mdl >> lift) [1,0,i] model.mdl
-                            [
-                              Options.onClick <| lift << Input field.name <|
-                              if value == "True" then "False" else "True"
-
-                            , if value == "True" then
-                                  Checkbox.checked
-                              else
-                                  Options.nop
-                            ]
-                            []
-
-                          , Html.label
-                            [
-                            ]
-                            [ text field.name
-                            ]
-                          ]
-                        ]
-                    Backend.String ->
-                        Textfield.render (Mdl >> lift) [1,0,i] model.mdl
-                            [ Options.onInput (Input field.name >> lift)
-                            , Textfield.value
-                                ( Dict.get field.name model.inputs
-                                  |> Maybe.withDefault ""
-                                )
-                            , when ( ( field.name == idField.name ) && not isCreate) <|
-                              Textfield.disabled
-                            , Textfield.fullWidth
-                            , css "margin-bottom" "32px"
-                            ]
-                            []
-                    Backend.Int ->
-                        Textfield.render (Mdl >> lift) [1,0,i] model.mdl
-                            [ Options.onInput (Input field.name >> lift)
-                            , Textfield.value
-                                ( Dict.get field.name model.inputs
-                                  |> Maybe.withDefault ""
-                                )
-                            , when ( ( field.name == idField.name ) && not isCreate) <|
-                              Textfield.disabled
-                            , Textfield.fullWidth
-                            , css "margin-bottom" "32px"
-                            ]
-                            []
-                    Backend.Float ->
-                        Textfield.render (Mdl >> lift) [1,0,i] model.mdl
-                            [ Options.onInput (Input field.name >> lift)
-                            , Textfield.value
-                                ( Dict.get field.name model.inputs
-                                  |> Maybe.withDefault ""
-                                )
-                            , when ( ( field.name == idField.name ) && not isCreate) <|
-                              Textfield.disabled
-                            , Textfield.fullWidth
-                            , css "margin-bottom" "32px"
-                            ]
-                            []
-              ]
-            )
+                 let
+                      value =
+                          Dict.get field.name model.inputs
+                 in
+                 renderField i field value
+             )
         )
       ]
 

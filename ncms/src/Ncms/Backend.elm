@@ -44,70 +44,59 @@ type alias Tipe =
     }
 
 
-toInputs : Tipe -> Value -> Dict String String
+toInputs : Tipe -> Value -> Dict String Value.Value
 toInputs { name, idField, fields } value =
-    let
-        toString v =
-            case v of
-                Value.String string ->
-                    string
-                Value.Bool bool ->
-                    if bool then
-                        "True"
-                    else
-                        "False"
-                Value.Null ->
-                    ""
-                Value.Number num ->
-                    Basics.toString num
-                Value.List xs ->
-                    "[]"
-                Value.Object _ ->
-                    "{}"
-    in
     case Value.expose value of
         Value.Object obj ->
             obj
-            |> Dict.map (\_ -> toString)
         _ ->
             Dict.empty
 
 
-toValue : Tipe -> Dict String String -> Value
+toValue : Tipe -> Dict String Value.Value -> Value
 toValue { idField, fields } inputs =
+    let
+        f tipe input =
+           case (tipe, input) of
+               (String, Just (Value.String string)) ->
+                   Encode.string string
+
+               (String, _) ->
+                   Encode.string ""
+
+               (Bool, Just (Value.Bool bool)) ->
+                   Encode.bool bool
+
+               (Bool, _) ->
+                   Encode.bool False
+
+               (Int, Just (Value.Number number)) ->
+                   if number == toFloat (floor number) then
+                       Encode.int (floor number)
+                   else
+                       Encode.int 0
+
+               (Int, _) ->
+                   Encode.int 0
+
+               (Float, Just (Value.Number number)) ->
+                   Encode.float number
+
+               (Float, _) ->
+                   Encode.float 0
+
+               (Maybe tipe_, Just Value.Null) ->
+                   Encode.null
+
+               (Maybe tipe_, Just _) ->
+                   f tipe_ input
+
+               (Maybe tipe_, _) ->
+                   Encode.null
+    in
     ( idField :: fields )
     |> List.map (\ { name, tipe } ->
-           ( name
-           , let
-                 input =
-                     Dict.get name inputs
-             in
-             case tipe of
-                 String ->
-                     case input of
-                         Just string ->
-                             Encode.string string
-                         Nothing ->
-                             Encode.string ""
-                 Bool ->
-                     case input of
-                         Just string ->
-                             Encode.bool (string == "True")
-                         Nothing ->
-                             Encode.bool False
-                 Int ->
-                     case input of
-                         Just string ->
-                             Encode.int (Result.withDefault 0 (String.toInt string))
-                         Nothing ->
-                             Encode.int 0
-                 Float ->
-                     case input of
-                         Just string ->
-                             Encode.float (Result.withDefault 0 (String.toFloat string))
-                         Nothing ->
-                             Encode.float 0
-           )
+           ( name, f tipe (Dict.get name inputs) )
        )
     |> Encode.object
 
@@ -138,6 +127,7 @@ type Prim
     | Bool
     | Int
     | Float
+    | Maybe Prim
 
 
 type alias Endpoint =

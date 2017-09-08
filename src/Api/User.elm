@@ -56,6 +56,10 @@ type alias User =
     , bool : Bool
     , int : Int
     , float : Float
+    , maybeString : Maybe (String)
+    , maybeBool : Maybe (Bool)
+    , maybeInt : Maybe (Int)
+    , maybeFloat : Maybe (Float)
     }
 
 
@@ -66,6 +70,10 @@ defaultUser =
     , bool = False
     , int = -1
     , float = 0.0
+    , maybeString = Nothing
+    , maybeBool = Nothing
+    , maybeInt = Nothing
+    , maybeFloat = Nothing
     }
 
 
@@ -75,11 +83,15 @@ defaultUser =
 
 userDecoder : Decoder User
 userDecoder =
-    Decode.map4 User
+    Decode.map8 User
         ( Decode.at [ "string" ] Decode.string )
         ( Decode.at [ "bool" ] Decode.bool )
         ( Decode.at [ "int" ] Decode.int )
         ( Decode.at [ "float" ] Decode.float )
+        ( Decode.at [ "maybeString" ] (Decode.maybe Decode.string) )
+        ( Decode.at [ "maybeBool" ] (Decode.maybe Decode.bool) )
+        ( Decode.at [ "maybeInt" ] (Decode.maybe Decode.int) )
+        ( Decode.at [ "maybeFloat" ] (Decode.maybe Decode.float) )
 
 
 
@@ -93,6 +105,10 @@ encodeUser value =
     , ( "bool", Encode.bool value.bool )
     , ( "int", Encode.int value.int )
     , ( "float", Encode.float value.float )
+    , ( "maybeString", Maybe.withDefault Encode.null <| Maybe.map Encode.string value.maybeString )
+    , ( "maybeBool", Maybe.withDefault Encode.null <| Maybe.map Encode.bool value.maybeBool )
+    , ( "maybeInt", Maybe.withDefault Encode.null <| Maybe.map Encode.int value.maybeInt )
+    , ( "maybeFloat", Maybe.withDefault Encode.null <| Maybe.map Encode.float value.maybeFloat )
     ]
     |> Encode.object
 
