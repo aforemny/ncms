@@ -22,8 +22,9 @@ import Material.Textfield as Textfield
 import Material.Typography as Typography
 import Navigation
 import Ncms.Backend as Backend exposing (Rest, Tipe)
-import Value
 import Page exposing ( ApiId(..), DataId(..) )
+import Task exposing (Task)
+import Value
 
 
 type alias Model =
@@ -52,11 +53,11 @@ update
     : (Msg msg -> msg)
     -> { tipe : Backend.Tipe
        , error : Http.Error -> msg
-       , create : (Result Http.Error Value -> msg) -> Value -> Cmd msg
-       , delete : (Result Http.Error () -> msg) -> String -> Cmd msg
-       , get : (Result Http.Error Value -> msg) -> String -> Cmd msg
-       , list : (Result Http.Error (List Value) -> msg) -> Cmd msg
-       , update : (Result Http.Error Value -> msg) -> Value -> Cmd msg
+       , create : Value -> Task Http.Error ()
+       , delete : String -> Task Http.Error ()
+       , get : String -> Task Http.Error Value
+       , list : Task Http.Error (List Value)
+       , update : Value -> Task Http.Error ()
        }
     -> Msg msg
     -> Model
@@ -71,8 +72,8 @@ update lift { tipe, create, error } msg model =
 
         Save ->
             ( model
-            , create (handle error (\_ -> lift SaveOk)) <|
-                  Backend.toValue tipe model.inputs
+            , attempt error (\_ -> lift SaveOk) <|
+              create ( Backend.toValue tipe model.inputs )
             )
 
         SaveOk ->
@@ -90,15 +91,24 @@ update lift { tipe, create, error } msg model =
             )
 
 
+attempt fail cont =
+    Task.attempt
+        ( \ result ->
+            case result of
+                Err e -> fail e
+                Ok x -> cont x
+        )
+
+
 init
     : (Msg msg -> msg)
     -> { tipe : Backend.Tipe
        , error : Http.Error -> msg
-       , create : (Result Http.Error Value -> msg) -> Value -> Cmd msg
-       , delete : (Result Http.Error () -> msg) -> String -> Cmd msg
-       , get : (Result Http.Error Value -> msg) -> String -> Cmd msg
-       , list : (Result Http.Error (List Value) -> msg) -> Cmd msg
-       , update : (Result Http.Error Value -> msg) -> Value -> Cmd msg
+       , create : Value -> Task Http.Error ()
+       , delete : String -> Task Http.Error ()
+       , get : String -> Task Http.Error Value
+       , list : Task Http.Error (List Value)
+       , update : Value -> Task Http.Error ()
        }
     -> Maybe DataId
     -> ( Model, Cmd msg )
@@ -107,13 +117,7 @@ init lift { error, get } dataId =
         Nothing ->
             ( defaultModel, Cmd.none )
         Just (DataId id) ->
-            ( defaultModel, get (handle error (lift << Get)) id )
-
-
-handle error msg result =
-    case result of
-        Ok x -> msg x
-        Err e -> error e
+            ( defaultModel, attempt error (lift << Get) (get id) )
 
 
 view : Bool -> (Msg msg -> msg) -> Tipe -> Model -> Html msg
@@ -168,6 +172,32 @@ view isCreate lift { name, idField, fields } model =
                           ]
                         ]
                     Backend.String ->
+                        Textfield.render (Mdl >> lift) [1,0,i] model.mdl
+                            [ Options.onInput (Input field.name >> lift)
+                            , Textfield.value
+                                ( Dict.get field.name model.inputs
+                                  |> Maybe.withDefault ""
+                                )
+                            , when ( ( field.name == idField.name ) && not isCreate) <|
+                              Textfield.disabled
+                            , Textfield.fullWidth
+                            , css "margin-bottom" "32px"
+                            ]
+                            []
+                    Backend.Int ->
+                        Textfield.render (Mdl >> lift) [1,0,i] model.mdl
+                            [ Options.onInput (Input field.name >> lift)
+                            , Textfield.value
+                                ( Dict.get field.name model.inputs
+                                  |> Maybe.withDefault ""
+                                )
+                            , when ( ( field.name == idField.name ) && not isCreate) <|
+                              Textfield.disabled
+                            , Textfield.fullWidth
+                            , css "margin-bottom" "32px"
+                            ]
+                            []
+                    Backend.Float ->
                         Textfield.render (Mdl >> lift) [1,0,i] model.mdl
                             [ Options.onInput (Input field.name >> lift)
                             , Textfield.value

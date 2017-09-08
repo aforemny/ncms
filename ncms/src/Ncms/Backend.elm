@@ -14,7 +14,27 @@ module Ncms.Backend exposing
 import Dict exposing (Dict)
 import Http exposing (Error)
 import Json.Encode as Encode exposing (Value)
+import Task exposing (Task)
 import Value
+
+
+type alias Rest a =
+    { tipe : Tipe
+    , create :
+         Value
+          -> Task Error ()
+    , delete :
+          String
+          -> Task Error ()
+    , get :
+          String
+          -> Task Error a
+    , list :
+          Task Error (List a)
+    , update :
+          Value
+          -> Task Error ()
+    }
 
 
 type alias Tipe =
@@ -69,6 +89,18 @@ toValue { idField, fields } inputs =
                              Encode.bool (string == "True")
                          Nothing ->
                              Encode.bool False
+                 Int ->
+                     case input of
+                         Just string ->
+                             Encode.int 42
+                         Nothing ->
+                             Encode.int 0
+                 Float ->
+                     case input of
+                         Just string ->
+                             Encode.float 9.99
+                         Nothing ->
+                             Encode.float 0
            )
        )
     |> Encode.object
@@ -98,49 +130,12 @@ field name tipe =
 type Prim
     = String
     | Bool
+    | Int
+    | Float
 
 
 type alias Endpoint =
     String
-
-
-type alias Rest msg =
-    { tipe : Tipe
-    , create :
-          (Result Error Value -> msg)
-          -> String
-          -> String
-          -> String
-          -> Value
-          -> Cmd msg
-    , delete :
-          (Result Error () -> msg)
-          -> String
-          -> String
-          -> String
-          -> String
-          -> Cmd msg
-    , get :
-          (Result Error Value -> msg)
-          -> String
-          -> String
-          -> String
-          -> String
-          -> Cmd msg
-    , list :
-          (Result Error (List Value) -> msg)
-          -> String
-          -> String
-          -> String
-          -> Cmd msg
-    , update :
-          (Result Error Value -> msg)
-          -> String
-          -> String
-          -> String
-          -> Value
-          -> Cmd msg
-    }
 
 
 lookup : String -> List (Rest msg) -> Maybe (Rest msg)

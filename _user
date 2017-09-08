@@ -1,4 +1,4 @@
-github_api of type User indexed on username:
+rest_api of type User indexed on username:
 
 type User =
     username : String

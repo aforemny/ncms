@@ -21,15 +21,16 @@ import Material.Toolbar as Toolbar
 import Material.Typography as Typography
 import Navigation exposing (Location)
 import Ncms.Backend as Backend
-import Ncms.Github as Github
 import Regex
 import Task
 import Task exposing (Task)
 
 import Api
 import Page exposing (Page, ApiId(..), DataId(..))
+import Pages.Dashboard
 import Pages.Edit
 import Pages.Listing
+-- import Pages.Login
 import Value
 
 
@@ -44,48 +45,44 @@ main =
 
 type alias Model =
     { mdl : Material.Model
-    , apis : Dict String ApiModel
-    , error : Maybe Http.Error
-    , page : Page
 
+    , apis : Dict String ApiModel
+    , initialized : Bool
+
+    , page : Page
     , edit : Pages.Edit.Model
     , listing : Pages.Listing.Model
+    , dashboard : Pages.Dashboard.Model
+    -- , login : Pages.Login.Model
 
-    , clientId : String
-    , clientSecret : String
-    , auth : Maybe { code : String, state : String }
-    , accessToken : Maybe String
-    , user : Maybe Github.User
-    , loginProcess : Bool
+    , queue : List (() -> Cmd Msg)
+    , queue_ : List (() -> Task Http.Error Msg)
+    , error : Maybe Http.Error
 
-    , queue : List (String -> Cmd Msg)
-
+    , owner : String
     , repo : String
-    , branch : String
     }
 
 
 defaultModel : Model
 defaultModel =
     { mdl = Material.defaultModel
-    , apis = Dict.empty
-    , error = Nothing
-    , page = Page.defaultPage
 
+    , apis = Dict.empty
+    , initialized = True
+
+    , page = Page.defaultPage
     , edit = Pages.Edit.defaultModel
     , listing = Pages.Listing.defaultModel
-
-    , clientId = ""
-    , clientSecret = ""
-    , auth = Nothing
-    , accessToken = Nothing
-    , user = Nothing
-    , loginProcess = True
+    , dashboard = Pages.Dashboard.defaultModel
+    -- , login = Pages.Login.defaultModel
 
     , queue = []
+    , queue_ = []
+    , error = Nothing
 
-    , repo = ""
-    , branch = ""
+    , owner = "aforemny"
+    , repo = "ncms"
     }
 
 
@@ -97,14 +94,13 @@ type Msg
 
     | EditMsg ApiId (Pages.Edit.Msg Msg)
     | ListingMsg ApiId (Pages.Listing.Msg Msg)
+    | DashboardMsg (Pages.Dashboard.Msg Msg)
+    -- | LoginMsg (Pages.Login.Msg Msg)
 
-    | Login
-    | InputClientId String
-    | InputClientSecret String
-    | Authenticate String
-    | UserProfile Github.User
+    -- | Login { clientId : String, clientSecret : String }
 
-    | Enqueue (String -> Cmd Msg)
+    | Enqueue (() -> Cmd Msg)
+    | Enqueue_ (() -> Task Http.Error Msg)
 
 
 type alias ApiModel =
@@ -127,12 +123,7 @@ defaultApiModel =
 
 
 init
-  : { auth : Maybe { code : String
-    , state : String }
-    , accessToken : Maybe String
-    , clientId : String
-    , clientSecret : String
-    }
+  : {}
   -> Location
   -> ( Model, Cmd Msg )
 init flags location =
@@ -140,72 +131,30 @@ init flags location =
         page =
             Page.fromHash location.hash
 
-        model =
-            { defaultModel
-            | page = page
-            , auth = flags.auth
-            , accessToken = flags.accessToken
-            , clientId = flags.clientId
-            , clientSecret = flags.clientSecret
-            }
-
-        ( modelWithPage, apiEffects ) =
-            pageInit model page
+        ( model, effects ) =
+            pageInit
+                { defaultModel
+                | page = page
+                }
+                page
     in
-    ( modelWithPage
-    ,
-      Cmd.batch
-      [
-        apiEffects
-
-      , case (flags.accessToken, flags.auth) of
-            ( Just accessToken, _ ) ->
-                Cmd.batch
-                [ enqueue
-                  ( \accessToken ->
-                    Github.getUser accessToken
-                    |> Task.attempt (\ result ->
-                        case result of
-                          Ok user -> UserProfile user
-                          Err error -> Error error
-                       )
-                  )
-                ]
-
-            ( Nothing, Just { code, state } ) ->
-                Http.send (handle Error Authenticate) <|
-                Http.request
-                  { method =
-                      "POST"
-                  , headers =
-                      [ Http.header "Accept" "application/json"
-                      ]
-                  , url =
-                      "https://cors-anywhere.herokuapp.com/https://github.com/login/oauth/access_token?client_id=" ++ flags.clientId ++ "&client_secret=" ++ flags.clientSecret ++ "&code=" ++ code ++ "&state=123"
-                   , body =
-                       Http.emptyBody
-                   , expect =
-                       Http.expectJson <|
-                       Decode.at [ "access_token" ] Decode.string
-                   , timeout=
-                       Nothing
-                   , withCredentials =
-                       False
-                  }
-            _ ->
-                Cmd.none
-      ]
-    )
+    ( model, effects )
 
 
 pageInit : Model -> Page -> ( Model, Cmd Msg )
 pageInit model page =
     case page of
+        Page.Dashboard  ->
+              let
+                  ( dashboard, effects ) =
+                      Pages.Dashboard.init DashboardMsg
+                      {
+                      }
+              in
+                  ( { model | dashboard = dashboard }, effects )
+
         Page.Listing (ApiId apiId) ->
             case Backend.lookup apiId Api.apis of
-                Nothing ->
-                    ( model, Cmd.none )
-                    -- ^ TODO
                 Just api ->
                     let
                         ( listing, effects ) =
@@ -213,26 +162,24 @@ pageInit model page =
                                 (getPage model api)
                     in
                         ( { model | listing = listing }, effects )
-
-        Page.Edit (ApiId apiId) id ->
-            case Backend.lookup apiId Api.apis of
                 Nothing ->
-                    ( model, Cmd.none  )
-                    -- ^ TODO
+                    ( model, Cmd.none )
+
+        Page.Edit (ApiId apiId) dataId ->
+            case Backend.lookup apiId Api.apis of
                 Just api ->
                     let
                         ( edit, effects ) =
                             Pages.Edit.init (EditMsg (ApiId apiId))
-                                (getPage model api)
-                                (Just id)
+                                   (getPage model api)
+                                   (Just dataId)
                     in
                         ( { model | edit = edit }, effects )
+                Nothing ->
+                    ( model, Cmd.none )
 
         Page.New (ApiId apiId) ->
             case Backend.lookup apiId Api.apis of
-                Nothing ->
-                    ( model, Cmd.none  )
-                    -- ^ TODO
                 Just api ->
                     let
                         ( edit, effects ) =
@@ -241,10 +188,11 @@ pageInit model page =
                                 Nothing
                     in
                         ( { model | edit = edit }, effects )
+                Nothing ->
+                    ( model, Cmd.none )
 
         _ ->
             ( model, Cmd.none )
-
 
 subscriptions model =
     Sub.none
@@ -265,9 +213,14 @@ port cacheClientCredentials : { clientId : String, clientSecret : String, redire
 port clearClientCredentials : () -> Cmd msg
 
 
-enqueue : (String -> Cmd Msg) -> Cmd Msg
+enqueue : (() -> Cmd Msg) -> Cmd Msg
 enqueue =
     Enqueue >> cmd
+
+
+enqueue_ : (() -> Task Http.Error Msg) -> Cmd Msg
+enqueue_ =
+    Enqueue_ >> cmd
 
 
 cmd : Msg -> Cmd Msg
@@ -280,53 +233,19 @@ update msg model =
     case msg of
 
         Enqueue cmd ->
-            case model.accessToken of
-                Nothing ->
-                    ( { model | queue = model.queue ++ [ cmd ] }, Cmd.none )
-                Just accessToken ->
-                    ( model, (cmd accessToken) )
+            if model.initialized then
+                ( { model | queue = model.queue ++ [ cmd ] }, Cmd.none )
+            else
+                ( model, (cmd ()) )
+
+        Enqueue_ task ->
+            if model.initialized then
+                ( model, Task.attempt (handle Error identity) (task ()) )
+            else
+                ( { model | queue_ = model.queue_ ++ [ task ] }, Cmd.none )
 
         Mdl msg_ ->
             Material.update Mdl msg_ model
-
-        UserProfile user ->
-            ( { model | user = Just user }, Cmd.none )
-
-        Authenticate accessToken ->
-            ( { model | accessToken = Just accessToken, queue = [] }
-            ,
-              Cmd.batch
-              [ cacheAccessToken accessToken
-              , Cmd.batch (List.map (\cmd -> cmd accessToken) model.queue)
-              , enqueue
-                ( \accessToken ->
-                  Github.getUser accessToken
-                  |> Task.attempt (\ result ->
-                      case result of
-                        Ok user -> UserProfile user
-                        Err error -> Error error
-                     )
-                )
-              ]
-            )
-
-        Login ->
-            ( model
-            ,
-              Cmd.batch
-              [ cacheClientCredentials
-                { clientId = model.clientId
-                , clientSecret = model.clientSecret
-                , redirectUrl = Just ("https://github.com/login/oauth/authorize?scope=repo&client_id=" ++ model.clientId ++ "&state=123")
-                }
-              ]
-            )
-
-        InputClientId clientId ->
-          ( { model | clientId = clientId }, Cmd.none )
-
-        InputClientSecret clientSecret ->
-          ( { model | clientSecret = clientSecret }, Cmd.none )
 
         Navigate page ->
             if model.page == page then
@@ -350,18 +269,16 @@ update msg model =
             let
                 _ = Debug.log "error" error
             in
-            ( { model | error = Just error }
-            ,
-              if model.loginProcess then
-                  case error of
-                      Http.BadStatus _ ->
-                          Cmd.none -- TODO:
-                          -- clearAccessToken ()
-                      _ ->
-                          Cmd.none
-              else
-                  Cmd.none
-            )
+            ( { model | error = Just error }, Cmd.none )
+
+        DashboardMsg msg_ ->
+            let
+                ( dashboard, effects ) =
+                    Pages.Dashboard.update DashboardMsg
+                        msg_
+                        model.dashboard
+            in
+            ( { model | dashboard = dashboard }, effects )
 
         EditMsg (ApiId apiId) msg_ ->
             case Backend.lookup apiId Api.apis of
@@ -402,6 +319,7 @@ handle fail succeed result =
         Err e -> fail e
 
 
+view : Model -> Html Msg
 view model =
     styled Html.div
     [ Typography.typography
@@ -480,48 +398,26 @@ view model =
           , Toolbar.section
             [ Toolbar.alignEnd
             ]
-            ( case model.user of
-                  Just user ->
-                      [ Html.img
-                        [ Html.src user.avatarUrl
-                        , Html.style
-                          [ ("width", "42px")
-                          , ("height", "42px")
-                          , ("border-radius", "21px")
-                          , ("align-self", "center")
-                          , ("margin-right", "16px")
-                          ]
-                        ]
-                        []
+            ( [ styled Html.div
+                [ css "width" "42px"
+                , css "height" "42px"
+                , css "border-radius" "21px"
+                , css "align-self" "center"
+                , css "margin-right" "16px"
+                , css "background-color" "#ccc"
+                ]
+                []
 
-                      , styled Html.div
-                        [ css "align-self" "center"
-                        , css "margin-right" "32px"
-                        ]
-                        [ Html.text user.name ]
-                      ]
-
-                  Nothing ->
-                      [ styled Html.div
-                        [ css "width" "42px"
-                        , css "height" "42px"
-                        , css "border-radius" "21px"
-                        , css "align-self" "center"
-                        , css "margin-right" "16px"
-                        , css "background-color" "#ccc"
-                        ]
-                        []
-
-                      , styled Html.div
-                        [ css "align-self" "center"
-                        , css "margin-right" "32px"
-                        , css "background-color" "#ccc"
-                        , css "height" "24px"
-                        , css "border-radius" "12px"
-                        , css "width" "160px"
-                        ]
-                        []
-                      ]
+              , styled Html.div
+                [ css "align-self" "center"
+                , css "margin-right" "32px"
+                , css "background-color" "#ccc"
+                , css "height" "24px"
+                , css "border-radius" "12px"
+                , css "width" "160px"
+                ]
+                []
+              ]
             )
           ]
         ]
@@ -531,74 +427,13 @@ view model =
         ]
         [ case model.page of
               Page.Dashboard ->
-                  Html.div []
-                  [
-                    styled Html.h1 [ Typography.title ] [ text "Dashboard" ]
-
-                  , case model.accessToken of
-                        Nothing ->
-                            Card.view
-                            [ css "max-width" "600px"
-                            ]
-                            [
-                              Card.primary []
-                              [ Card.title [ Card.large ] [ text "Login" ]
-                              ]
-
-                            , Card.supportingText
-                              [ css "display" "flex"
-                              , css "flex-flow" "column"
-                              ]
-                              [
-                                Html.p []
-                                [ text "Obtain credentials by "
-                                , Html.a
-                                  [ Html.href "https://github.com/settings/applications/new"
-                                  ]
-                                  [ text "registering an application" ]
-                                , text " on GitHub."
-                                ]
-                              , Html.label []
-                                [ text "Client Id:"
-                                ]
-                              , Textfield.render Mdl [0,0,0,1] model.mdl
-                                [ Options.onInput InputClientId
-                                , Textfield.value model.clientId
-                                ]
-                                []
-                              ,
-                                Html.label []
-                                [ text "Client Secret:"
-                                ]
-                              , Textfield.render Mdl [0,0,0,2] model.mdl
-                                [ Options.onInput InputClientSecret
-                                , Textfield.value model.clientSecret
-                                ]
-                                []
-                              , Button.render Mdl [0,0,0,3] model.mdl
-                                [ Options.onClick Login
-                                , Button.raised
-                                , Button.accent
-                                ]
-                                [ text "Sign in"
-                                ]
-                              ]
-                            ]
-                        Just _ ->
-                            Card.view
-                            [ css "max-width" "900px"
-                            ]
-                            [ text (toString model)
-                            ]
-                  ]
+                  Pages.Dashboard.view DashboardMsg
+                      { -- login = Login
+                      }
+                      model.dashboard
 
               Page.New (ApiId apiId) ->
-
-                  let
-                      api =
-                          Backend.lookup apiId Api.apis
-                  in
-                  case api of
+                  case Backend.lookup apiId Api.apis of
                       Just { tipe } ->
                           let
                               apiModel =
@@ -646,79 +481,23 @@ view model =
     |> Material.top
 
 
---getPage :
---    Model
---    -> Backend.Rest Value
---    -> { tipe : Backend.Tipe
---       , error : Http.Error -> msg
---       , create : (Result Http.Error Value -> msg) -> Value -> Cmd msg
---       , delete : (Result Http.Error () -> msg) -> String -> Cmd msg
---       , get : (Result Http.Error Value -> msg) -> String -> Cmd msg
---       , list : (Result Http.Error (List Value) -> msg) -> Cmd msg
---       , update : (Result Http.Error Value -> msg) -> Value -> Cmd msg
---       }
+getPage :
+    Model
+    -> Backend.Rest Value
+    -> { tipe : Backend.Tipe
+       , error : Http.Error -> Msg
+       , create : Value -> Task Http.Error ()
+       , delete : String -> Task Http.Error ()
+       , get : String -> Task Http.Error Value
+       , list : Task Http.Error (List Value)
+       , update : Value -> Task Http.Error ()
+       }
 getPage model api =
-    let
-      owner =
-          "aforemny"
-
-      repo =
-          "ncms"
-
-      tipe = api.tipe
-
-      error = Error
-
-      create cont value =
-          let
-              f accessToken =
-                  api.create cont accessToken owner repo value
-          in
-          model.accessToken
-          |> Maybe.map f
-          |> Maybe.withDefault (enqueue f)
-
-      update cont value =
-          let
-              f accessToken =
-                  api.update cont accessToken owner repo value
-          in
-          model.accessToken
-          |> Maybe.map f
-          |> Maybe.withDefault (enqueue f)
-
-      delete cont id =
-          let
-              f accessToken =
-                  api.delete cont accessToken owner repo id
-          in
-          model.accessToken
-          |> Maybe.map f
-          |> Maybe.withDefault (enqueue f)
-
-      get cont id =
-          let
-              f accessToken =
-                  api.get cont accessToken owner repo id
-          in
-          model.accessToken
-          |> Maybe.map f
-          |> Maybe.withDefault (enqueue f)
-
-      list cont =
-          let
-              f accessToken =
-                  api.list cont accessToken owner repo
-          in
-          model.accessToken
-          |> Maybe.map f
-          |> Maybe.withDefault (enqueue f)
-    in
-    { tipe = tipe
-    , error = error
-    , create = create
-    , update = update
-    , delete = delete
-    , get = get
-    , list = list
+    { tipe = api.tipe
+    , error = Error
+    , create = api.create
+    , update = api.update
+    , delete = api.delete
+    , get = api.get
+    , list = api.list
     }

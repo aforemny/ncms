@@ -28,6 +28,7 @@ import qualified Snap
 import qualified Snap.Http.Server as Snap
 import qualified System.Directory as Directory
 import qualified System.FilePath as FilePath
+import System.IO.Unsafe
 
 
 main = do
@@ -363,10 +364,11 @@ elmApis modules =
     Text.unlines
     [ "module Api exposing ( apis )"
     , "\n"
-    , "import Json.Decode as Json"
-    , "import Ncms.Backend.Github as Github"
-    , "import Ncms.Backend.Ncms as Backend"
+    , "import Http exposing (Error)"
+    , "import Json.Decode as Json exposing (Value)"
     , "import Ncms.Backend exposing (Rest,Prim(..))"
+    , "import Ncms.Backend.Ncms as Backend"
+    , "import Task exposing (Task)"
     , modules
       & map (\ (Module (ApiDecl kind type_ idField) types _) ->
           "import Api." + type_ + " as " + type_
@@ -410,6 +412,16 @@ elmApis modules =
 
                       makePrim typeRep =
                           case typeRep of
+                              TString ->
+                                  "String"
+                              TBool ->
+                                  "Bool"
+                              TInt ->
+                                  "Int"
+                              TFloat ->
+                                  "Float"
+                              -- TMaybe TypeRep
+                              -- TList TypeRep
                               _ ->
                                   "String"
                   in
@@ -431,9 +443,9 @@ elmApis modules =
         , ( case kind of
                 "ncms" ->
                     [ "get = Backend.get \"" + endpoint + "\" identity Json.value"
-                    , "update = Backend.update \"" + endpoint + "\" identity Json.value"
+                    , "update = Backend.update \"" + endpoint + "\" identity Json.value (Backend.idField \"" + idField + "\")"
                     , "delete = Backend.delete \"" + endpoint + "\" identity Json.value"
-                    , "create = Backend.create \"" + endpoint + "\" identity Json.value"
+                    , "create = Backend.create \"" + endpoint + "\" identity Json.value (Backend.idField \"" + idField + "\")"
                     , "list = Backend.list \"" + endpoint + "\" identity Json.value"
                     ]
                 "github" ->
@@ -454,7 +466,7 @@ elmApis modules =
       )
     & Text.intercalate "\n  , "
     & Text.append "apis =\n  [ "
-    & Text.append "apis : List (Rest msg)\n"
+    & Text.append "apis : List (Rest Value)\n"
     & Prelude.flip Text.append "\n  ] "
   ]
 
@@ -504,7 +516,7 @@ elmApi modName (Module (ApiDecl kind type_ idField) types _) =
           case kind of
               "ncms" ->
                   Text.unlines
-                  [ "get : (Result Error " + type_ + " -> msg) -> " + showTypeRep indexTypeRep + " -> Cmd msg"
+                  [ "get : " + showTypeRep indexTypeRep + " -> Task Error " + type_
                   , "get ="
                   , "    Backend.get \"" + endpoint + "\" encode" + type_ + " " + toLowercase type_ + "Decoder"
                   ]
@@ -521,7 +533,7 @@ elmApi modName (Module (ApiDecl kind type_ idField) types _) =
           case kind of
               "ncms" ->
                   Text.unlines
-                  [ "delete : (Result Error () -> msg) -> " + showTypeRep indexTypeRep + " -> Cmd msg"
+                  [ "delete : " + showTypeRep indexTypeRep + " -> Task Error ()"
                   , "delete ="
                   , "    Backend.delete \"" + endpoint + "\" encode" + type_ + " " + toLowercase type_ + "Decoder"
                   ]
@@ -538,9 +550,9 @@ elmApi modName (Module (ApiDecl kind type_ idField) types _) =
           case kind of
               "ncms" ->
                   Text.unlines
-                  [ "update : (Result Error " + type_ + " -> msg) -> " + type_ + " -> Cmd msg"
+                  [ "update : " + type_ + " -> Task Error ()"
                   , "update ="
-                  , "    Backend.create \"" + endpoint + "\" encode" + type_ + " " + toLowercase type_ + "Decoder"
+                  , "    Backend.create \"" + endpoint + "\" encode" + type_ + " " + toLowercase type_ + "Decoder ." + idField
                   ]
               "github" ->
                   Text.unlines
@@ -555,9 +567,9 @@ elmApi modName (Module (ApiDecl kind type_ idField) types _) =
           case kind of
               "ncms" ->
                   Text.unlines
-                  [ "create : (Result Error " + type_ + " -> msg) -> " + type_ + " -> Cmd msg"
+                  [ "create : " + type_ + " -> Task Error ()"
                   , "create ="
-                  , "    Backend.create \"" + endpoint + "\" encode" + type_ + " " + toLowercase type_ + "Decoder"
+                  , "    Backend.create \"" + endpoint + "\" encode" + type_ + " " + toLowercase type_ + "Decoder ." + idField
                   ]
               "github" ->
                   Text.unlines
@@ -572,7 +584,7 @@ elmApi modName (Module (ApiDecl kind type_ idField) types _) =
           case kind of
               "ncms" ->
                   Text.unlines
-                  [ "list : (Result Error (List " + type_ + ") -> msg) -> Cmd msg"
+                  [ "list : Task Error (List " + type_ + ")"
                   , "list ="
                   , "    Backend.list \"" + endpoint + "\" encode" + type_ + " " + toLowercase type_ + "Decoder"
                   ]
@@ -652,7 +664,12 @@ elmApi modName (Module (ApiDecl kind type_ idField) types _) =
                         + typeRepDecoder typeRep  + " )"
                       )
                     & Text.unlines
-                    & Text.append ("    Decode.map" + Text.pack (show (Prelude.length fields)) + " " + typeName + "\n")
+                    & Text.append (
+                          if Prelude.length fields == 1 then
+                              "    Decode.map " + typeName + "\n"
+                          else
+                              "    Decode.map" + Text.pack (show (Prelude.length fields)) + " " + typeName + "\n"
+                      )
                   ]
           in
           Map.elems types
@@ -722,6 +739,7 @@ elmApi modName (Module (ApiDecl kind type_ idField) types _) =
   , "    )"
   , "\n"
   , "import Http exposing (Error)"
+  , "import Task exposing (Task)"
   , "import Json.Decode as Decode exposing (Decoder)"
   , "import Json.Encode as Encode"
   , case kind of
@@ -1025,3 +1043,8 @@ toLowercase str =
           Text.toLower (Text.pack (singleton firstLetter)) `Text.append` rest
         Nothing ->
             str
+
+
+debug s x =
+    unsafePerformIO (Prelude.putStrLn (s Prelude.++ show x))
+        `Prelude.seq` x

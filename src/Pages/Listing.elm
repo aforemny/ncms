@@ -15,14 +15,15 @@ import Http
 import Json.Decode exposing (Value)
 import Material
 import Material.Button as Button
-import Material.List as Lists
 import Material.Card as Card
 import Material.Checkbox as Checkbox
+import Material.List as Lists
 import Material.Options as Options exposing (styled, cs, css, when)
 import Material.Textfield as Textfield
 import Material.Typography as Typography
 import Navigation
 import Ncms.Backend as Backend exposing (Rest, Tipe)
+import Task exposing (Task)
 import Value
 
 import Page exposing ( ApiId(..), DataId(..) )
@@ -52,11 +53,11 @@ update
     : (Msg msg -> msg)
     -> { tipe : Backend.Tipe
        , error : Http.Error -> msg
-       , create : (Result Http.Error Value -> msg) -> Value -> Cmd msg
-       , delete : (Result Http.Error () -> msg) -> String -> Cmd msg
-       , get : (Result Http.Error Value -> msg) -> String -> Cmd msg
-       , list : (Result Http.Error (List Value) -> msg) -> Cmd msg
-       , update : (Result Http.Error Value -> msg) -> Value -> Cmd msg
+       , create : Value -> Task Http.Error ()
+       , delete : String -> Task Http.Error ()
+       , get : String -> Task Http.Error Value
+       , list : Task Http.Error (List Value)
+       , update : Value -> Task Http.Error ()
        }
     -> Msg msg
     -> Model
@@ -70,31 +71,34 @@ update lift { tipe, delete, list, error } msg model =
             ( { model | values = values }, Cmd.none )
 
         (Delete (DataId id)) ->
-            ( model, delete (handle error (\_ -> lift DeleteOk)) id )
+            ( model, attempt error (\ _ -> lift DeleteOk) (delete id) )
 
         DeleteOk ->
-            ( model, list (handle error (lift << List)) )
+            ( model, attempt error (lift << List) list )
+
+
+attempt fail cont =
+    Task.attempt
+        ( \ result ->
+            case result of
+                Err e -> fail e
+                Ok x -> cont x
+        )
 
 
 init
     : (Msg msg -> msg)
     -> { tipe : Backend.Tipe
        , error : Http.Error -> msg
-       , create : (Result Http.Error Value -> msg) -> Value -> Cmd msg
-       , delete : (Result Http.Error () -> msg) -> String -> Cmd msg
-       , get : (Result Http.Error Value -> msg) -> String -> Cmd msg
-       , list : (Result Http.Error (List Value) -> msg) -> Cmd msg
-       , update : (Result Http.Error Value -> msg) -> Value -> Cmd msg
+       , create : Value -> Task Http.Error ()
+       , delete : String -> Task Http.Error ()
+       , get : String -> Task Http.Error Value
+       , list : Task Http.Error (List Value)
+       , update : Value -> Task Http.Error ()
        }
     -> ( Model, Cmd msg )
 init lift { error, list } =
-    ( defaultModel, list (handle error (lift << List)) )
-
-
-handle error msg result =
-    case result of
-        Ok x -> msg x
-        Err e -> error e
+    ( defaultModel, attempt error (lift << List) list )
 
 
 view
