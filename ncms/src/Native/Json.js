@@ -19,9 +19,9 @@ function expose(value) {
       if ((typeof value === "object")) {
           if (Array.isArray(value)) {
               var elements = _elm_lang$core$Native_List.Nil;
-              for (var element in value) {
+              for (var i = value.length - 1; i >= 0; i--) {
                   elements =
-                      _elm_lang$core$Native_List.Cons(expose(element), elements);
+                      _elm_lang$core$Native_List.Cons(expose(value[i]), elements);
               }
               result = { ctor: "List", _0: elements };
           } else {
@@ -39,8 +39,6 @@ function expose(value) {
           }
       }
     }
-    console.log(value);
-    console.log(result);
     return result;
 }
 

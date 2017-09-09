@@ -48,7 +48,7 @@ main = do
     modules <-
         forM apiFiles $ \ apiFile -> do
             parsedApiFile <- fmap parse (readFile apiFile)
-            case debug "parsedApiFile" parsedApiFile of
+            case parsedApiFile of
                 Right parsedApiFile ->
                     return parsedApiFile
                 Left e ->
@@ -380,7 +380,7 @@ elmApis modules =
     , "\n"
     , "-- API"
     , "\n"
-    , debug "modules" modules
+    , modules
       & map (\ (Module (ApiDecl kind type_ idField) types _) ->
           let
               endpoint =
@@ -425,7 +425,8 @@ elmApis modules =
                                   "Float"
                               TMaybe typeRep' ->
                                   "Maybe (" + makePrim typeRep' + ")"
-                              -- TList TypeRep
+                              TList typeRep' ->
+                                  "List (" + makePrim typeRep' + ")"
                   in
                   [ "name = \"" + typeName + "\""
                   , "idField = \n" + makeField idField
@@ -619,10 +620,10 @@ elmApi modName (Module (ApiDecl kind type_ idField) types _) =
                       TInt -> "Encode.int"
                       TFloat -> "Encode.float"
                       TMaybe typeRep ->
-                          "Maybe.withDefault Encode.null <| Maybe.map "
-                          + encodeTypeRep typeRep
+                          "(Maybe.withDefault Encode.null << Maybe.map ("
+                          + encodeTypeRep typeRep + "))"
                       TList typeRep ->
-                          "Encode.list <| List.map " + encodeTypeRep typeRep
+                          "Encode.list << List.map " + encodeTypeRep typeRep + "<|"
 
               decodeTypeRep (TypeDecl typeName fields)  =
                   Text.unlines
@@ -929,6 +930,12 @@ typeRep =
   , fmap (const TBool) (symbol "Bool")
   , fmap (const TInt) (symbol "Int")
   , fmap (const TFloat) (symbol "Float")
+  , string "Maybe (" *>
+      ( ( string "Maybe"
+          *> fail "Maybe (Maybe …) is not a type"
+        )
+          <|> ( fmap TMaybe (string "Maybe (" *> typeRep <* string ")") )
+      )
   , fmap TMaybe (string "Maybe " *> typeRep)
   , fmap TList (string "List " *> typeRep)
   ]

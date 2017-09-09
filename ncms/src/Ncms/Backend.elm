@@ -6,9 +6,8 @@ module Ncms.Backend exposing
     , field
     , Prim(..)
 
+    , defaultValue
     , lookup
-    , toValue
-    , toInputs
     )
 
 import Dict exposing (Dict)
@@ -20,20 +19,11 @@ import Value
 
 type alias Rest a =
     { tipe : Tipe
-    , create :
-         Value
-          -> Task Error ()
-    , delete :
-          String
-          -> Task Error ()
-    , get :
-          String
-          -> Task Error a
-    , list :
-          Task Error (List a)
-    , update :
-          Value
-          -> Task Error ()
+    , list : Task Error (List a)
+    , get : String -> Task Error a
+    , create : Value -> Task Error ()
+    , update : Value -> Task Error ()
+    , delete : String -> Task Error ()
     }
 
 
@@ -42,63 +32,6 @@ type alias Tipe =
     , idField : Field
     , fields : List Field
     }
-
-
-toInputs : Tipe -> Value -> Dict String Value.Value
-toInputs { name, idField, fields } value =
-    case Value.expose value of
-        Value.Object obj ->
-            obj
-        _ ->
-            Dict.empty
-
-
-toValue : Tipe -> Dict String Value.Value -> Value
-toValue { idField, fields } inputs =
-    let
-        f tipe input =
-           case (tipe, input) of
-               (String, Just (Value.String string)) ->
-                   Encode.string string
-
-               (String, _) ->
-                   Encode.string ""
-
-               (Bool, Just (Value.Bool bool)) ->
-                   Encode.bool bool
-
-               (Bool, _) ->
-                   Encode.bool False
-
-               (Int, Just (Value.Number number)) ->
-                   if number == toFloat (floor number) then
-                       Encode.int (floor number)
-                   else
-                       Encode.int 0
-
-               (Int, _) ->
-                   Encode.int 0
-
-               (Float, Just (Value.Number number)) ->
-                   Encode.float number
-
-               (Float, _) ->
-                   Encode.float 0
-
-               (Maybe tipe_, Just Value.Null) ->
-                   Encode.null
-
-               (Maybe tipe_, Just _) ->
-                   f tipe_ input
-
-               (Maybe tipe_, _) ->
-                   Encode.null
-    in
-    ( idField :: fields )
-    |> List.map (\ { name, tipe } ->
-           ( name, f tipe (Dict.get name inputs) )
-       )
-    |> Encode.object
 
 
 tipe : String -> Field -> List Field -> Tipe
@@ -128,10 +61,29 @@ type Prim
     | Int
     | Float
     | Maybe Prim
+    | List Prim
 
 
-type alias Endpoint =
-    String
+defaultValue : Prim -> Value.Value
+defaultValue prim =
+    case prim of
+        String ->
+            Value.String ""
+
+        Bool ->
+            Value.Bool False
+
+        Int ->
+            Value.Number 0
+
+        Float ->
+            Value.Number 0
+
+        Maybe _ ->
+            Value.Null
+
+        List _ ->
+            Value.List []
 
 
 lookup : String -> List (Rest msg) -> Maybe (Rest msg)

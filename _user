@@ -6,6 +6,4 @@ type User =
     int : Int
     float : Float
     maybeString : Maybe String
-    maybeBool : Maybe Bool
-    maybeInt : Maybe Int
-    maybeFloat : Maybe Float
+    listString : List String

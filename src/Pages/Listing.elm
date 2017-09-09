@@ -155,10 +155,13 @@ view lift { navigate } tipe model =
                ]
 
              , model.values
+               |> Debug.log "pre-expose"
+               |> List.map Value.expose
+               |> Debug.log "post-expose"
                |> List.map (\ value ->
                       let
                           id =
-                              case Debug.log "EXPOSE" <| Value.expose (Debug.log "VALUE" value) of
+                              case value of
                                   Value.Object obj ->
                                       Dict.get tipe.idField.name obj
                                       |> Maybe.map (\ v ->
@@ -170,7 +173,7 @@ view lift { navigate } tipe model =
                                   _ ->
                                       ""
                       in
-                      fieldsRow (Just id) [] (fromValue fields (Value.expose value))
+                      fieldsRow (Just id) [] (fromValue fields value)
                   )
              ]
            )
@@ -230,7 +233,7 @@ view lift { navigate } tipe model =
                     Value.Object kvs ->
                         let
                            f tipe value =
-                              case Debug.log "tipe, value" ( tipe, value ) of
+                              case ( tipe, value ) of
                                  ( Backend.String, Just (Value.String string)) ->
                                      string
                                  ( Backend.String, _) ->
@@ -253,6 +256,12 @@ view lift { navigate } tipe model =
                                      f tipe_ value
                                  ( Backend.Maybe _, _ ) ->
                                      "–"
+                                 ( Backend.List tipe_, Just (Value.List values) ) ->
+                                     values
+                                     |> List.map (f tipe_ << Just)
+                                     |> String.join ", "
+                                 ( Backend.List tipe_, _ ) ->
+                                     "[]"
                         in
                         f tipe (Dict.get name kvs)
 

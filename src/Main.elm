@@ -58,9 +58,6 @@ type alias Model =
     , queue : List (() -> Cmd Msg)
     , queue_ : List (() -> Task Http.Error Msg)
     , error : Maybe Http.Error
-
-    , owner : String
-    , repo : String
     }
 
 
@@ -80,9 +77,6 @@ defaultModel =
     , queue = []
     , queue_ = []
     , error = Nothing
-
-    , owner = "aforemny"
-    , repo = "ncms"
     }
 
 

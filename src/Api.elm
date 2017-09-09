@@ -36,14 +36,8 @@ apis =
         ,              { name = "maybeString"
               , tipe = Maybe (String)
               }
-        ,              { name = "maybeBool"
-              , tipe = Maybe (Bool)
-              }
-        ,              { name = "maybeInt"
-              , tipe = Maybe (Int)
-              }
-        ,              { name = "maybeFloat"
-              , tipe = Maybe (Float)
+        ,              { name = "listString"
+              , tipe = List (String)
               }
               ]
           }
