@@ -1,33 +1,38 @@
 {-# LANGUAGE NoImplicitPrelude #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 module Main where
 
 import Control.Applicative ((<$>), (<*>), (<*), (*>), (<|>))
-import Control.Monad (join, sequence)
+import Control.Exception (catch)
+import Control.Monad (join, sequence, unless, when)
 import Control.Monad (Monad(..), mapM, mapM_, forM, forM_, (=<<))
 import Control.Monad.Trans (liftIO)
 import Data.Attoparsec.Text (Parser, (<?>))
 import Data.Either (Either(Left,Right))
 import Data.Function ((&))
-import qualified Data.HashMap.Lazy as HashMap
-import qualified Data.Vector as Vector
 import Data.Map (Map)
 import Data.Maybe (Maybe(..))
 import Prelude (Show(show), Bool(..), IO, concat)
 import qualified Data.Aeson as Aeson
 import qualified Data.Attoparsec.Text as Parser
-import qualified Data.ByteString.Lazy as ByteString
 import qualified Data.ByteString.Char8 as LB
+import qualified Data.ByteString.Lazy as ByteString
+import qualified Data.HashMap.Lazy as HashMap
 import qualified Data.Map as Map
 import qualified Data.Maybe as Maybe
 import qualified Data.Text as Text
+import qualified Data.Vector as Vector
 import qualified Prelude
 import qualified Snap
 import qualified Snap.Http.Server as Snap
 import qualified System.Directory as Directory
 import qualified System.FilePath as FilePath
+import qualified System.Process as Process
+import qualified System.IO as IO
+import qualified System.IO.Error as IO
 import System.IO.Unsafe
 
 
@@ -38,7 +43,7 @@ main = do
         & fmap (
             Prelude.filter ( \ fp ->
               [ isPrefixOf "_"
-              , Prelude.not . isSuffixOf "~"
+              , not . isSuffixOf "~"
               ]
               & map (\ f -> f  fp )
               & Prelude.and
@@ -54,7 +59,12 @@ main = do
                 Left e ->
                     error (Text.unpack e)
 
-    mkdir "src/Api"
+    mapM mkdir
+        [ "src/Api"
+        , "log"
+        , "image"
+        ]
+
     forM_ modules $ \ mod_@(Module (ApiDecl kind type_ idField) types _) -> do
         let
             moduleName =
@@ -72,7 +82,22 @@ main = do
         apiRoutes =
             map apiRoute modules
 
-    mkdir "log"
+    imageFiles <- do
+        imageFiles <-
+            findFiles "image"
+            & fmap (Prelude.filter (not . isSuffixOf ".json"))
+            & liftIO
+        forM_ imageFiles $ \ imageFile -> do
+            let
+                jsonFn =
+                    imageFile
+                    & FilePath.dropExtension
+                    & flip (Prelude.++) ".json"
+            doesExist <- Directory.doesFileExist jsonFn
+            unless doesExist $ do
+                liftIO $ IO.tryIOError (createImageFileMeta imageFile jsonFn)
+                return ()
+
     Snap.httpServe Snap.defaultConfig $ do
       Snap.route
         ( [
@@ -82,10 +107,163 @@ main = do
                 Snap.writeText =<< liftIO (readFile "build/elm.js")
             ]
 
+          , imageRoute
+
           , concat apiRoutes
           ]
           & concat
         )
+
+
+createImageFileMeta imageFile jsonFile = do
+    let
+        identify fn = do
+            Process.readCreateProcess proc ""
+          where
+            proc =
+                Process.shell
+                ( concat
+                  [ "identify -format '{"
+                  , "\"size\": \"%b\","
+                  , "\"directory\": \"%d\","
+                  , "\"extension\": \"%e\","
+                  , "\"file\": \"%t\","
+                  , "\"width\": %w,"
+                  , "\"height\": %h"
+                  , "}' '" Prelude.++ fn Prelude.++ "'"
+                  ]
+                )
+    Prelude.writeFile jsonFile =<< identify imageFile
+
+
+imageRoute :: List (LB.ByteString, Snap.Snap ())
+imageRoute =
+    [ -- action read:
+      (,) "image/:id" $ do
+        Snap.method Snap.GET $  do
+          accept <-
+              Snap.getRequest
+              & fmap (Snap.getHeader "Accept")
+              & fmap (Maybe.maybe "*/*" identity)
+
+          unless ( Prelude.or
+                   [ LB.isInfixOf "*/*" accept
+                   , LB.isInfixOf "image/*" accept
+                   , LB.isInfixOf "image/png" accept
+                   ]
+                 ) $
+              Snap.pass
+
+          id_ <-
+              Snap.getParam "id"
+              & fmap (Maybe.maybe "" identity)
+              & fmap LB.unpack
+          fn <-
+              Snap.getsRequest Snap.rqPathInfo
+              & fmap LB.unpack
+              & fmap ((FilePath.</>) ("image" FilePath.</> (id_)))
+          Snap.modifyResponse $
+              Snap.setContentType "image/png"
+          doesExist <- liftIO $ Directory.doesFileExist fn
+          if doesExist then
+              Snap.writeLBS =<< liftIO (ByteString.readFile fn)
+          else
+              Snap.modifyResponse $ Snap.setResponseStatus 404 "Not Found"
+
+    , -- action update:
+      (,) "image/:id" $ do
+        Snap.modifyResponse $
+            Snap.setContentType "application/json"
+        Snap.method Snap.POST $  do
+          id_ <-
+              Snap.getParam "id"
+              & fmap (Maybe.maybe "" identity)
+              & fmap LB.unpack
+          fn <-
+              Snap.getsRequest Snap.rqPathInfo
+              & fmap LB.unpack
+              & fmap ((FilePath.</>) ("image" FilePath.</> (id_)))
+          body <- Snap.readRequestBody 104857600
+          fileExists <- liftIO $ Directory.doesFileExist fn
+          if fileExists then
+              Snap.writeText "does exist"
+          else do
+              let
+                  jsonFn =
+                      fn
+                      & FilePath.dropExtension
+                      & flip (Prelude.++) ".json"
+              liftIO $ do
+                  ByteString.writeFile fn body
+                  IO.tryIOError (createImageFileMeta fn jsonFn)
+              Snap.writeLBS (Aeson.encode fn)
+
+    , -- action get:
+      (,) "image/:id" $ do
+        Snap.modifyResponse $
+            Snap.setContentType "application/json"
+        Snap.method Snap.GET $  do
+          id_ <-
+              Snap.getParam "id"
+              & fmap (Maybe.maybe "" identity)
+              & fmap LB.unpack
+          fn <-
+              Snap.getsRequest Snap.rqPathInfo
+              & fmap LB.unpack
+              & fmap ((FilePath.</>) ("image" FilePath.</> (id_)))
+          fileExists <- liftIO $ Directory.doesFileExist fn
+          if fileExists then do
+              Snap.writeLBS =<< liftIO (ByteString.readFile fn)
+          else do
+              Snap.modifyResponse $ Snap.setResponseStatus 404 "Not Found"
+
+    , -- action delete
+      (,) "image/:id" $ do
+        Snap.modifyResponse $
+            Snap.setContentType "application/json"
+        id_ <-
+            Snap.getParam "id"
+            & fmap (Maybe.maybe "" identity)
+            & fmap LB.unpack
+        fn <-
+            Snap.getsRequest Snap.rqPathInfo
+            & fmap LB.unpack
+            & fmap ((FilePath.</>) ("image" FilePath.</> (id_)))
+        let
+            jsonFn =
+                fn
+                & FilePath.dropExtension
+                & flip (Prelude.++) ".json"
+        doesExist <- liftIO $ Directory.doesFileExist fn
+        doesJsonExist <- liftIO $ Directory.doesFileExist jsonFn
+        when doesExist $ do
+            liftIO $ Directory.removeFile fn
+        when doesJsonExist $ do
+            liftIO $ Directory.removeFile jsonFn
+
+    , -- action list:
+      (,) "image" $ do
+        Snap.modifyResponse $
+            Snap.setContentType "application/json"
+        Snap.method Snap.GET $  do
+            files <- liftIO $ findFiles "image"
+            let
+                jsonFiles =
+                    files
+                    & Prelude.filter ( isSuffixOf ".json" )
+            jsonFileContents <-
+                forM jsonFiles $ \ jsonFile -> do
+                    fileContents <- liftIO $ ByteString.readFile jsonFile
+                    return (Aeson.decode fileContents :: Maybe Aeson.Value)
+            Snap.writeLBS $
+                Aeson.encode (Maybe.catMaybes jsonFileContents)
+
+--    , -- action create:
+--      (,) "image" $ do
+--        Snap.modifyResponse $
+--            Snap.setContentType "application/json"
+--        Snap.writeText "not implemented"
+    ]
 
 
 apiRoute :: Module -> List (LB.ByteString, Snap.Snap ())
@@ -233,7 +411,7 @@ verify (TypeDecl typeName fields) value =
                         let
                             value =
                                 HashMap.lookup fieldName obj
-                                & Maybe.maybe (defaultValue typeRep) Prelude.id
+                                & Maybe.maybe (defaultValue typeRep) identity
                         in
                           unifies typeRep value
                       )
@@ -392,7 +570,7 @@ elmApis modules =
                       typeName == type_
                   )
                 & head
-                & Maybe.maybe (error "no main type") Prelude.id
+                & Maybe.maybe (error "no main type") identity
 
               otherTypes =
                   Map.elems types
@@ -411,7 +589,7 @@ elmApis modules =
                           ]
                           & Text.intercalate "\n              , "
                           & Text.append "              { "
-                          & Prelude.flip Text.append "\n              }"
+                          & flip Text.append "\n              }"
 
                       makePrim typeRep =
                           case typeRep of
@@ -434,11 +612,11 @@ elmApis modules =
                     & map makeField
                     & Text.intercalate "\n        ,"
                     & Text.append "fields =\n              [\n"
-                    & Prelude.flip Text.append "\n              ]"
+                    & flip Text.append "\n              ]"
                   ]
                   & Text.intercalate "\n          , "
                   & Text.append "          { "
-                  & Prelude.flip Text.append "\n          }"
+                  & flip Text.append "\n          }"
         in
         [
           "tipe =\n" + makeType mainType
@@ -465,12 +643,12 @@ elmApis modules =
         ]
         & Text.intercalate "\n    , "
         & Text.append "\n    { "
-        & Prelude.flip Text.append "\n    }"
+        & flip Text.append "\n    }"
       )
     & Text.intercalate "\n  , "
     & Text.append "apis =\n  [ "
     & Text.append "apis : List (Rest Value)\n"
-    & Prelude.flip Text.append "\n  ] "
+    & flip Text.append "\n  ] "
   ]
 
 
@@ -608,7 +786,7 @@ elmApi modName (Module (ApiDecl kind type_ idField) types _) =
           , create
           ]
           & Text.intercalate "\n\n"
-          & Prelude.flip Text.append "\n\n"
+          & flip Text.append "\n\n"
 
       encoders =
           let
@@ -636,14 +814,14 @@ elmApi modName (Module (ApiDecl kind type_ idField) types _) =
                       )
                     & Text.intercalate "\n    , "
                     & Text.append "    [ "
-                    & Prelude.flip Text.append "\n    ]"
+                    & flip Text.append "\n    ]"
                   , "    |> Encode.object"
                   ]
           in
           Map.elems types
           & map decodeTypeRep
           & Text.intercalate "\n\n"
-          & Prelude.flip Text.append "\n\n"
+          & flip Text.append "\n\n"
 
       decoders =
           let
@@ -678,7 +856,7 @@ elmApi modName (Module (ApiDecl kind type_ idField) types _) =
           Map.elems types
           & map decodeTypeRep
           & Text.intercalate "\n\n"
-          & Prelude.flip Text.append "\n\n"
+          & flip Text.append "\n\n"
 
       showTypeRep typeRep =
           case typeRep of
@@ -700,7 +878,7 @@ elmApi modName (Module (ApiDecl kind type_ idField) types _) =
                     )
                   & Text.intercalate "\n    , "
                   & Text.append "    { "
-                  & Prelude.flip Text.append "\n    }"
+                  & flip Text.append "\n    }"
                 ]
             )
           & Text.intercalate "\n\n"
@@ -726,7 +904,7 @@ elmApi modName (Module (ApiDecl kind type_ idField) types _) =
                     )
                   & Text.intercalate "\n    , "
                   & Text.append "    { "
-                  & Prelude.flip Text.append "\n    }"
+                  & flip Text.append "\n    }"
                 ]
             )
           & Text.intercalate "\n\n"
@@ -1057,3 +1235,19 @@ toLowercase str =
 debug s x =
     unsafePerformIO (Prelude.putStrLn (s Prelude.++ ": " Prelude.++ show x))
         `Prelude.seq` x
+
+
+identity =
+    Prelude.id
+
+
+flip =
+    Prelude.flip
+
+
+not =
+    Prelude.not
+
+
+type IOError =
+    Prelude.IOError

@@ -1,3 +1,6 @@
 [submodule "elm-mdc"]
 	path = elm-mdc
 	url = git@github.com:aforemny/elm-mdc.git
+[submodule "file-reader"]
+	path = file-reader
+	url = github.com:simonh1000/file-reader.git

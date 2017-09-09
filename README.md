@@ -6,6 +6,12 @@ $ git submodule init
 $ git submodule update
 ```
 
+- Edit `file-reader/src/Native/FileReader.js`
+
+```
+$ sed -i 's/_simonh1000\$file_reader/_aforemny$ncms/' file-reader/src/Native/FileReader.js
+```
+
 - Run ncms backend:
 ```
 $ nix-shell default.nix -A ncms --run "runghc ncms"

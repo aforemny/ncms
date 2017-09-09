@@ -9,11 +9,12 @@ module Page exposing
 
 
 type Page
-    = Dashboard
+    = NotFound String
+    | Dashboard
     | Listing ApiId
     | Edit ApiId DataId
     | New ApiId
-    | NotFound String
+    | Image (Maybe String)
 
 
 type ApiId =
@@ -31,23 +32,31 @@ defaultPage =
 
 fromHash : String -> Page
 fromHash hash =
-    case String.uncons hash of
-        Nothing ->
+    case String.split "/" hash of
+        [] ->
             Dashboard
-        Just ('#', "") ->
+        (""::[]) ->
             Dashboard
-        Just ('#', rest) ->
-            case String.split "/" rest of
-                (api::"new"::_) ->
-                    New (ApiId api)
-                (api::"edit"::id::_) ->
-                    Edit (ApiId api) (DataId id)
-                (api::_) ->
-                    Listing (ApiId api)
+        ("#"::[]) ->
+            Dashboard
+        ("#image"::[]) ->
+            Image Nothing
+        ("#image"::folder) ->
+            Image (Just (String.join "/" folder))
+        (head::rest) ->
+            case String.uncons head of
+                Just ('#', api) ->
+                    case rest of
+                      (api::"new"::_) ->
+                          New (ApiId api)
+                      (api::"edit"::id::_) ->
+                          Edit (ApiId api) (DataId id)
+                      (api::_) ->
+                          Listing (ApiId api)
+                      _ ->
+                          NotFound hash
                 _ ->
                     NotFound hash
-        _ ->
-            NotFound hash
 
 toHash : Page -> String
 toHash page =
@@ -62,3 +71,7 @@ toHash page =
             "#" ++ api
         NotFound hash ->
             hash
+        Image Nothing ->
+            "#image"
+        Image (Just folder) ->
+            "#image/" ++ folder

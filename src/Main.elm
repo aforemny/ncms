@@ -30,6 +30,7 @@ import Page exposing (Page, ApiId(..), DataId(..))
 import Pages.Dashboard
 import Pages.Edit
 import Pages.Listing
+import Pages.Image
 -- import Pages.Login
 import Value
 
@@ -54,6 +55,7 @@ type alias Model =
     , listing : Pages.Listing.Model
     , dashboard : Pages.Dashboard.Model
     -- , login : Pages.Login.Model
+    , image : Pages.Image.Model
 
     , queue : List (() -> Cmd Msg)
     , queue_ : List (() -> Task Http.Error Msg)
@@ -73,6 +75,7 @@ defaultModel =
     , listing = Pages.Listing.defaultModel
     , dashboard = Pages.Dashboard.defaultModel
     -- , login = Pages.Login.defaultModel
+    , image = Pages.Image.defaultModel
 
     , queue = []
     , queue_ = []
@@ -90,6 +93,7 @@ type Msg
     | ListingMsg ApiId (Pages.Listing.Msg Msg)
     | DashboardMsg (Pages.Dashboard.Msg Msg)
     -- | LoginMsg (Pages.Login.Msg Msg)
+    | ImageMsg (Pages.Image.Msg Msg)
 
     -- | Login { clientId : String, clientSecret : String }
 
@@ -185,11 +189,24 @@ pageInit model page =
                 Nothing ->
                     ( model, Cmd.none )
 
+        Page.Image folder ->
+            let
+                ( image, effects ) =
+                    Pages.Image.init ImageMsg { error = Error }
+            in
+                ( { model | image = image }, effects )
+
         _ ->
             ( model, Cmd.none )
 
+
+subscriptions : Model -> Sub Msg
 subscriptions model =
-    Sub.none
+    Sub.batch
+    [ Material.subscriptions Mdl model
+    , Pages.Image.subscriptions ImageMsg model.image
+      -- TODO: other pages
+    ]
 
 
 port redirect : String -> Cmd msg
@@ -306,6 +323,15 @@ update msg model =
                     in
                     ( { model | listing = listing }, effects )
 
+        ImageMsg msg_ ->
+            let
+                ( image, effects ) =
+                    Pages.Image.update ImageMsg { error = Error }
+                        msg_
+                        model.image
+            in
+            ( { model | image = image }, effects )
+
 
 handle fail succeed result =
     case result of
@@ -344,6 +370,21 @@ view model =
                 [ css "padding-left" "36px"
                 ]
                 [ text "Dashboard"
+                ]
+              ]
+            , Lists.li
+              [ Options.onClick (Navigate (Page.Image Nothing))
+              , css "cursor" "pointer"
+              , case model.page of
+                    Page.Image _ ->
+                        css "background-color" "#ccc"
+                    _ ->
+                        Options.nop
+              ]
+              [ Lists.text
+                [ css "padding-left" "36px"
+                ]
+                [ text "Images"
                 ]
               ]
             ]
@@ -464,6 +505,14 @@ view model =
 
                       Nothing ->
                           text "api not found"
+
+              Page.Image folder ->
+                  Pages.Image.view ImageMsg
+                      { navigate = Navigate
+                      }
+                      { folder = folder
+                      }
+                      model.image
 
               Page.NotFound _ ->
                   Html.div []

@@ -63,7 +63,7 @@ update
     -> Model
     -> ( Model, Cmd msg )
 update lift { tipe, delete, list, error } msg model =
-    case Debug.log "Msg" msg of
+    case msg of
         Mdl msg_ ->
             Material.update (Mdl >> lift) msg_ model
 
@@ -155,9 +155,7 @@ view lift { navigate } tipe model =
                ]
 
              , model.values
-               |> Debug.log "pre-expose"
                |> List.map Value.expose
-               |> Debug.log "post-expose"
                |> List.map (\ value ->
                       let
                           id =
