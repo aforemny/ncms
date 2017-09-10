@@ -47,11 +47,11 @@ fromHash hash =
             case String.uncons head of
                 Just ('#', api) ->
                     case rest of
-                      (api::"new"::_) ->
+                      ("new"::_) ->
                           New (ApiId api)
-                      (api::"edit"::id::_) ->
+                      ("edit"::id::_) ->
                           Edit (ApiId api) (DataId id)
-                      (api::_) ->
+                      [] ->
                           Listing (ApiId api)
                       _ ->
                           NotFound hash
