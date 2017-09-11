@@ -71,7 +71,8 @@ type Msg msg
 
 
 subscriptions lift model =
-    Menu.subs (Mdl >> lift) model.mdl
+    Material.subscriptions (lift << Mdl) model
+
 
 update
     : (Msg msg -> msg)
@@ -291,91 +292,96 @@ view lift { navigate } { folder } model =
           ]
 
         , Card.view []
-          [ GridList.view
-            [ GridList.twolineCaption
-            , GridList.iconAlignEnd
-            ]
-            ( List.concat
-              [
-                model.uploadingImages
-                |> List.map (\ { nativeFile, dataUrl } ->
-                       GridList.tile []
-                       [ GridList.primary []
-                         ( case dataUrl of
-                               Just url ->
-                                   [ GridList.image [] url
-                                   ]
-                               Nothing ->
-                                   []
+          ( if model.images == [] then
+                []
+            else
+                [
+                  GridList.render (lift << Mdl) [0] model.mdl
+                  [ GridList.twolineCaption
+                  , GridList.iconAlignEnd
+                  ]
+                  ( List.concat
+                    [
+                      model.uploadingImages
+                      |> List.map (\ { nativeFile, dataUrl } ->
+                             GridList.tile []
+                             [ GridList.primary []
+                               ( case dataUrl of
+                                     Just url ->
+                                         [ GridList.image [] url
+                                         ]
+                                     Nothing ->
+                                         []
+                               )
+                             ]
                          )
-                       ]
-                   )
 
-              , model.images
-                |> List.filterMap ( \ image ->
-                       case folder of
-                           Just folder ->
-                               if String.startsWith ("image/" ++ folder) image.directory then
-                                   Just image
-                               else
-                                   Nothing
-                           Nothing ->
-                               Just image
-                   )
-                |> ( if folder /= Nothing then
-                         identity
-                     else
-                         List.take 24
-                   )
-                |> List.indexedMap (\ i image ->
-                       let
-                          url =
-                              image.directory ++ "/" ++ image.file ++ "." ++ image.extension
-                       in
-                       GridList.tile []
-                       [ GridList.primary []
-                         [ GridList.primaryContent
-                           [ css "background-image" ("url(\"" ++ url ++ "\")")
-                           ]
-                           []
-                         ]
-                       , GridList.secondary
-                         [
-                         ]
-                         [ styled Html.div
-                           [ cs "mdc-grid-tile__icon"
-                           ]
-                           [ styled Html.i
-                             [ cs "material-icons"
-                             , Menu.attach (Mdl >> lift) [13,i]
-                             ]
-                             [ text "more_vert"
-                             ]
-
-                           , Menu.render (Mdl >> lift) [13,i] model.mdl
-                             [ Menu.openFromTopRight
-                             ]
-                             ( Menu.ul Lists.ul []
-                               [ Menu.li Lists.li
-                                 [ Options.onClick (lift (Delete image))
+                    , model.images
+                      |> List.filterMap ( \ image ->
+                             case folder of
+                                 Just folder ->
+                                     if String.startsWith ("image/" ++ folder) image.directory then
+                                         Just image
+                                     else
+                                         Nothing
+                                 Nothing ->
+                                     Just image
+                         )
+                      |> ( if folder /= Nothing then
+                               identity
+                           else
+                               List.take 24
+                         )
+                      |> List.indexedMap (\ i image ->
+                             let
+                                url =
+                                    image.directory ++ "/" ++ image.file ++ "." ++ image.extension
+                             in
+                             GridList.tile []
+                             [ GridList.primary []
+                               [ GridList.primaryContent
+                                 [ css "background-image" ("url(\"" ++ url ++ "\")")
                                  ]
-                                 [ text "Delete"
+                                 []
+                               ]
+                             , GridList.secondary
+                               [
+                               ]
+                               [ styled Html.div
+                                 [ cs "mdc-grid-tile__icon"
+                                 ]
+                                 [ styled Html.i
+                                   [ cs "material-icons"
+                                   , Menu.attach (Mdl >> lift) [0,i]
+                                   ]
+                                   [ text "more_vert"
+                                   ]
+
+                                 , Menu.render (Mdl >> lift) [0,i] model.mdl
+                                   [ Menu.openFromTopRight
+                                   ]
+                                   ( Menu.ul Lists.ul []
+                                     [ Menu.li Lists.li
+                                       [ Options.onClick (lift (Delete image))
+                                       ]
+                                       [ text "Delete"
+                                       ]
+                                     ]
+                                   )
+                                 ]
+                               , GridList.title []
+                                 [ text image.file
+                                 ]
+                               , GridList.supportingText []
+                                 [ text image.size
                                  ]
                                ]
-                             )
-                           ]
-                         , GridList.title []
-                           [ text image.file
-                           ]
-                         , GridList.supportingText []
-                           [ text image.size
-                           ]
-                         ]
-                       ]
-                   )
-              ]
-            )
-          ]
+                             ]
+                         )
+                    ]
+                  )
+                ]
+          )
         ]
       ]
     ]

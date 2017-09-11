@@ -135,7 +135,7 @@ view lift { navigate } tipe model =
              , Card.actions []
                [ Button.render (Mdl >> lift) [0,1,2,3] model.mdl
                  [ Options.onClick (navigate (Page.New (ApiId name)))
-                 , Button.accent
+                 , Button.secondary
                  ]
                  [ text "New"
                  ]
