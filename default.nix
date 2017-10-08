@@ -9,10 +9,12 @@ rec {
       [ attoparsec snap directory aeson ]
   );
 
-  ncms = pkgs.stdenv.mkDerivation {
-    name = "ncms";
-    buildInputs = [
-      elm-make elm-package elm-repl ghc
-    ];
-  };
+  ncms =
+    pkgs.haskellPackages.callPackage ./ncms.nix {};
+#  pkgs.stdenv.mkDerivation {
+#    name = "ncms";
+#    buildInputs = [
+#      elm-make elm-package elm-repl ghc
+#    ];
+#  };
 }

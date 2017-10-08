@@ -12,6 +12,8 @@ cabal-version:       >=1.10
 
 executable ncms
   main-is:             Main.hs
+  ghc-options:
+    -fwarn-unused-imports
   default-extensions:
     NoImplicitPrelude,
     NoMonomorphismRestriction,

@@ -2,4 +2,6 @@ _*
 build
 elm-stuff
 log
+result
 .*.swp
+dist

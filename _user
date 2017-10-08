@@ -1,9 +1,0 @@
-rest_api of type User indexed on string:
-
-type User =
-    string : String
-    bool : Bool
-    int : Int
-    float : Float
-    maybeString : Maybe String
-    listString : List String
