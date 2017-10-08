@@ -1,8 +1,3 @@
-{-# LANGUAGE NoImplicitPrelude #-}
-{-# LANGUAGE NoMonomorphismRestriction #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE ScopedTypeVariables #-}
-
 module Main where
 
 import Control.Applicative ((<$>), (<*>), (<*), (*>), (<|>))
@@ -10,12 +5,15 @@ import Control.Exception (catch)
 import Control.Monad (join, sequence, unless, when)
 import Control.Monad (Monad(..), mapM, mapM_, forM, forM_, (=<<))
 import Control.Monad.Trans (liftIO)
+import Core
 import Data.Attoparsec.Text (Parser, (<?>))
 import Data.Either (Either(Left,Right))
-import Data.Function ((&))
 import Data.Map (Map)
 import Data.Maybe (Maybe(..))
-import Prelude (Show(show), Bool(..), IO, concat)
+import Prelude (Show, Bool(..))
+import qualified Core.List as List
+import qualified Core.String as String
+import qualified Core.Tuple as Tuple
 import qualified Data.Aeson as Aeson
 import qualified Data.Attoparsec.Text as Parser
 import qualified Data.ByteString.Char8 as LB
@@ -25,28 +23,26 @@ import qualified Data.Map as Map
 import qualified Data.Maybe as Maybe
 import qualified Data.Text as Text
 import qualified Data.Vector as Vector
-import qualified Prelude
 import qualified Snap
 import qualified Snap.Http.Server as Snap
 import qualified System.Directory as Directory
 import qualified System.FilePath as FilePath
-import qualified System.Process as Process
 import qualified System.IO as IO
 import qualified System.IO.Error as IO
-import System.IO.Unsafe
+import qualified System.Process as Process
 
 
 main = do
     apiFiles <-
         liftIO (findFiles ".")
-        & fmap (map (\ fp -> Prelude.drop 2 fp))
+        & fmap (List.map (\ fp -> List.dropLeft 2 fp))
         & fmap (
-            Prelude.filter ( \ fp ->
+            List.filter ( \ fp ->
               [ isPrefixOf "_"
               , not . isSuffixOf "~"
               ]
-              & map (\ f -> f  fp )
-              & Prelude.and
+              & List.map (\ f -> f  fp )
+              & and
             )
           )
 
@@ -57,7 +53,7 @@ main = do
                 Right parsedApiFile ->
                     return parsedApiFile
                 Left e ->
-                    error (Text.unpack e)
+                    error (String.unpack e)
 
     mapM mkdir
         [ "src/Api"
@@ -68,11 +64,11 @@ main = do
     forM_ modules $ \ mod_@(Module (ApiDecl kind type_ idField) types _) -> do
         let
             moduleName =
-                "Api." `Text.append` type_
+                "Api." `String.append` type_
 
             fp =
-                "src/Api/" `Text.append` type_ `Text.append` ".elm"
-                & Text.unpack
+                "src/Api/" `String.append` type_ `String.append` ".elm"
+                & String.unpack
 
         writeFile fp (elmApi moduleName mod_)
 
@@ -80,19 +76,19 @@ main = do
 
     let
         apiRoutes =
-            map apiRoute modules
+            List.map apiRoute modules
 
     imageFiles <- do
         imageFiles <-
             findFiles "image"
-            & fmap (Prelude.filter (not . isSuffixOf ".json"))
+            & fmap (List.filter (not . isSuffixOf ".json"))
             & liftIO
         forM_ imageFiles $ \ imageFile -> do
             let
                 jsonFn =
                     imageFile
                     & FilePath.dropExtension
-                    & flip (Prelude.++) ".json"
+                    & flip (++) ".json"
             doesExist <- Directory.doesFileExist jsonFn
             unless doesExist $ do
                 liftIO $ IO.tryIOError (createImageFileMeta imageFile jsonFn)
@@ -109,20 +105,20 @@ main = do
 
           , imageRoute
 
-          , concat apiRoutes
+          , List.concat apiRoutes
           ]
-          & concat
+          & List.concat
         )
 
 
 createImageFileMeta imageFile jsonFile = do
     let
         identify fn = do
-            Process.readCreateProcess proc ""
+            fmap String.pack (Process.readCreateProcess proc "")
           where
             proc =
                 Process.shell
-                ( concat
+                ( List.concat
                   [ "identify -format '{"
                   , "\"size\": \"%b\","
                   , "\"directory\": \"%d\","
@@ -130,10 +126,10 @@ createImageFileMeta imageFile jsonFile = do
                   , "\"file\": \"%t\","
                   , "\"width\": %w,"
                   , "\"height\": %h"
-                  , "}' '" Prelude.++ fn Prelude.++ "'"
+                  , "}' '" ++ fn ++ "'"
                   ]
                 )
-    Prelude.writeFile jsonFile =<< identify imageFile
+    writeFile jsonFile =<< identify imageFile
 
 
 imageRoute :: List (LB.ByteString, Snap.Snap ())
@@ -146,7 +142,7 @@ imageRoute =
               & fmap (Snap.getHeader "Accept")
               & fmap (Maybe.maybe "*/*" identity)
 
-          unless ( Prelude.or
+          unless ( or
                    [ LB.isInfixOf "*/*" accept
                    , LB.isInfixOf "image/*" accept
                    , LB.isInfixOf "image/png" accept
@@ -192,7 +188,7 @@ imageRoute =
                   jsonFn =
                       fn
                       & FilePath.dropExtension
-                      & flip (Prelude.++) ".json"
+                      & flip (++) ".json"
               liftIO $ do
                   ByteString.writeFile fn body
                   IO.tryIOError (createImageFileMeta fn jsonFn)
@@ -233,7 +229,7 @@ imageRoute =
             jsonFn =
                 fn
                 & FilePath.dropExtension
-                & flip (Prelude.++) ".json"
+                & flip (++) ".json"
         doesExist <- liftIO $ Directory.doesFileExist fn
         doesJsonExist <- liftIO $ Directory.doesFileExist jsonFn
         when doesExist $ do
@@ -250,7 +246,7 @@ imageRoute =
             let
                 jsonFiles =
                     files
-                    & Prelude.filter ( isSuffixOf ".json" )
+                    & List.filter ( isSuffixOf ".json" )
             jsonFileContents <-
                 forM jsonFiles $ \ jsonFile -> do
                     fileContents <- liftIO $ ByteString.readFile jsonFile
@@ -280,30 +276,30 @@ apiRoute (Module (ApiDecl kind type_ idField) types _) =
                     error "typeDecl"
     in
     [ -- action list:
-      (,) (LB.pack (Text.unpack endpoint)) $ do
+      (,) (LB.pack (String.unpack endpoint)) $ do
         Snap.modifyResponse $
             Snap.setContentType "application/json"
         Snap.method Snap.GET $  do
-            files <- liftIO $ findFiles (Text.unpack endpoint)
+            files <- liftIO $ findFiles (String.unpack endpoint)
             let
                 jsonFiles =
                     files
-                    & Prelude.filter ( isSuffixOf ".json" )
+                    & List.filter ( isSuffixOf ".json" )
             parsedJsonFiles <-
                 liftIO $ forM jsonFiles ( \ jsonFile ->
                     fmap Aeson.decode (ByteString.readFile jsonFile) )
             Snap.writeLBS $
-                Aeson.encode (map (verify typeDecl) (Maybe.catMaybes parsedJsonFiles))
+                Aeson.encode (List.map (verify typeDecl) (Maybe.catMaybes parsedJsonFiles))
 
     , -- action get:
-      (,) (LB.pack (Text.unpack endpoint) `LB.append` "/:id") $ do
+      (,) (LB.pack (String.unpack endpoint) `LB.append` "/:id") $ do
         Snap.modifyResponse $
             Snap.setContentType "application/json"
         Snap.method Snap.GET $  do
           id_ <- fmap (Maybe.maybe "" LB.unpack) (Snap.getParam "id")
           let
               fn =
-                  Text.unpack endpoint FilePath.</> (id_ Prelude.++ ".json")
+                  String.unpack endpoint FilePath.</> (id_ ++ ".json")
           doesFileExist <- liftIO $ Directory.doesFileExist fn
           if doesFileExist then do
               file <- fmap Aeson.decode (liftIO (ByteString.readFile fn))
@@ -320,7 +316,7 @@ apiRoute (Module (ApiDecl kind type_ idField) types _) =
               Snap.writeText "does not exist"
 
     , -- action update:
-      (,) (LB.pack (Text.unpack endpoint) `LB.append` "/:id") $ do
+      (,) (LB.pack (String.unpack endpoint) `LB.append` "/:id") $ do
         Snap.modifyResponse $
             Snap.setContentType "application/json"
         Snap.method Snap.POST $  do
@@ -332,7 +328,7 @@ apiRoute (Module (ApiDecl kind type_ idField) types _) =
                       Just obj -> do
                           let
                               fn =
-                                  Text.unpack endpoint FilePath.</> (id_ Prelude.++ ".json")
+                                  String.unpack endpoint FilePath.</> (id_ ++ ".json")
                           if FilePath.normalise fn == fn then do
                               liftIO $ ByteString.writeFile fn (Aeson.encode obj)
                               Snap.writeLBS (Aeson.encode obj)
@@ -344,14 +340,14 @@ apiRoute (Module (ApiDecl kind type_ idField) types _) =
                   Snap.writeText "does not prase"
 
     , -- action delete
-      (,) (LB.pack (Text.unpack endpoint) `LB.append` "/:id") $ do
+      (,) (LB.pack (String.unpack endpoint) `LB.append` "/:id") $ do
         Snap.modifyResponse $
             Snap.setContentType "application/json"
         Snap.method Snap.DELETE $  do
           id_ <- fmap (Maybe.maybe "" LB.unpack) (Snap.getParam "id")
           let
               fn =
-                  Text.unpack endpoint FilePath.</> (id_ Prelude.++ ".json")
+                  String.unpack endpoint FilePath.</> (id_ ++ ".json")
           if FilePath.normalise fn == fn then do
               doesExist <- liftIO (Directory.doesFileExist fn)
               if doesExist then do
@@ -373,7 +369,7 @@ apiRoute (Module (ApiDecl kind type_ idField) types _) =
               Snap.writeText "does not normalize"
 
     , -- action create:
-      (,) (LB.pack (Text.unpack endpoint)) $ do
+      (,) (LB.pack (String.unpack endpoint)) $ do
         Snap.modifyResponse $
             Snap.setContentType "application/json"
         Snap.method Snap.POST $  do
@@ -384,10 +380,10 @@ apiRoute (Module (ApiDecl kind type_ idField) types _) =
                       Just obj -> do
                           let
                               fn =
-                                  Text.unpack endpoint FilePath.</> (id_ Prelude.++ ".json")
+                                  String.unpack endpoint FilePath.</> (id_ ++ ".json")
                               id_ =
                                   case HashMap.lookup idField obj of
-                                      Just (Aeson.String id_) -> Text.unpack id_
+                                      Just (Aeson.String id_) -> String.unpack id_
                                       _ -> ""
                           if FilePath.normalise fn == fn then do
                               liftIO $ ByteString.writeFile fn (Aeson.encode obj)
@@ -407,7 +403,7 @@ verify (TypeDecl typeName fields) value =
             let
                 typechecks =
                     fields
-                    & map (\ ( fieldName, typeRep ) ->
+                    & List.map (\ ( fieldName, typeRep ) ->
                         let
                             value =
                                 HashMap.lookup fieldName obj
@@ -415,7 +411,7 @@ verify (TypeDecl typeName fields) value =
                         in
                           unifies typeRep value
                       )
-                    & Prelude.foldl (Prelude.&&) True
+                    & List.foldl (&&) True
 
                 defaultValue :: TypeRep -> Aeson.Value
                 defaultValue typeRep =
@@ -456,7 +452,7 @@ verify (TypeDecl typeName fields) value =
                         (TList typeRep, Aeson.Array v) ->
                             v
                             & Vector.map (unifies typeRep)
-                            & Vector.foldl (Prelude.&&) True
+                            & Vector.foldl (&&) True
 
                         _ ->
                             False
@@ -473,14 +469,14 @@ findFiles :: FilePath -> IO (List FilePath)
 
 findFiles "" =
     findFiles "."
-    & fmap (map (Prelude.drop 2))
+    & fmap (List.map (List.dropLeft 2))
 
 findFiles dir = do
     dirs <- findDirectories dir
-    fmap (fmap concat) $ forM (dir:dirs) $ \dir ->
+    fmap (fmap List.concat) $ forM (dir:dirs) $ \dir ->
         Directory.listDirectory dir
         & fmap (
-            map ( \ fn -> do
+            List.map ( \ fn -> do
               fileExists <- Directory.doesFileExist (dir FilePath.</> fn)
               if fileExists then
                   return (Just (dir FilePath.</> fn))
@@ -505,7 +501,7 @@ findWith pred dir = do
         find_ dir =
             Directory.listDirectory dir
             & fmap (
-                map ( \ fn -> do
+                List.map ( \ fn -> do
                   isTrue <- pred (dir FilePath.</> fn)
                   if isTrue then
                       return (Just (dir FilePath.</> fn))
@@ -516,22 +512,13 @@ findWith pred dir = do
             & join . fmap sequence
             & fmap Maybe.catMaybes
     dirs <- find_ dir
-    (Prelude.++) dirs <$> (fmap concat $ mapM find_ dirs)
-
-isPrefixOf pre str =
-    pre == Prelude.take (Prelude.length pre) str
-
-isSuffixOf suf str =
-    suf == Prelude.drop (Prelude.length str Prelude.- Prelude.length suf) str
-
-mkdir =
-    Directory.createDirectoryIfMissing True
+    (++) dirs <$> (fmap List.concat $ mapM find_ dirs)
 
 
 elmApis modules =
     let
         (+) =
-            Text.append
+            String.append
 
         showTypeRep typeRep =
             case typeRep of
@@ -542,7 +529,7 @@ elmApis modules =
                 TMaybe typeRep -> "Maybe (" + showTypeRep typeRep + ")"
                 TList typeRep -> "List (" + showTypeRep typeRep + ")"
     in
-    Text.unlines
+    String.join "\n"
     [ "module Api exposing ( apis )"
     , "\n"
     , "import Http exposing (Error)"
@@ -551,22 +538,22 @@ elmApis modules =
     , "import Ncms.Backend.Ncms as Backend"
     , "import Task exposing (Task)"
     , modules
-      & map (\ (Module (ApiDecl kind type_ idField) types _) ->
+      & List.map (\ (Module (ApiDecl kind type_ idField) types _) ->
           "import Api." + type_ + " as " + type_
         )
-      & Text.unlines
+      & String.join "\n"
     , "\n"
     , "-- API"
     , "\n"
     , modules
-      & map (\ (Module (ApiDecl kind type_ idField) types _) ->
+      & List.map (\ (Module (ApiDecl kind type_ idField) types _) ->
           let
               endpoint =
                   toLowercase type_
 
               mainType =
                 Map.elems types
-                & Prelude.filter (\ (TypeDecl typeName fields) ->
+                & List.filter (\ (TypeDecl typeName fields) ->
                       typeName == type_
                   )
                 & head
@@ -574,7 +561,7 @@ elmApis modules =
 
               otherTypes =
                   Map.elems types
-                  & Prelude.filter (\ (TypeDecl typeName fields) ->
+                  & List.filter (\ (TypeDecl typeName fields) ->
                         typeName /= type_
                     )
 
@@ -587,9 +574,9 @@ elmApis modules =
                           [ "name = \"" + fieldName + "\""
                           , "tipe = " + makePrim typeRep
                           ]
-                          & Text.intercalate "\n              , "
-                          & Text.append "              { "
-                          & flip Text.append "\n              }"
+                          & String.join "\n              , "
+                          & String.append "              { "
+                          & flip String.append "\n              }"
 
                       makePrim typeRep =
                           case typeRep of
@@ -609,14 +596,14 @@ elmApis modules =
                   [ "name = \"" + typeName + "\""
                   , "idField = \n" + makeField idField
                   , otherFields
-                    & map makeField
-                    & Text.intercalate "\n        ,"
-                    & Text.append "fields =\n              [\n"
-                    & flip Text.append "\n              ]"
+                    & List.map makeField
+                    & String.join "\n        ,"
+                    & String.append "fields =\n              [\n"
+                    & flip String.append "\n              ]"
                   ]
-                  & Text.intercalate "\n          , "
-                  & Text.append "          { "
-                  & flip Text.append "\n          }"
+                  & String.join "\n          , "
+                  & String.append "          { "
+                  & flip String.append "\n          }"
         in
         [
           "tipe =\n" + makeType mainType
@@ -639,16 +626,16 @@ elmApis modules =
                 _ ->
                     error "unsupported type"
           )
-          & Text.intercalate "\n    , "
+          & String.join "\n    , "
         ]
-        & Text.intercalate "\n    , "
-        & Text.append "\n    { "
-        & flip Text.append "\n    }"
+        & String.join "\n    , "
+        & String.append "\n    { "
+        & flip String.append "\n    }"
       )
-    & Text.intercalate "\n  , "
-    & Text.append "apis =\n  [ "
-    & Text.append "apis : List (Rest Value)\n"
-    & flip Text.append "\n  ] "
+    & String.join "\n  , "
+    & String.append "apis =\n  [ "
+    & String.append "apis : List (Rest Value)\n"
+    & flip String.append "\n  ] "
   ]
 
 
@@ -658,7 +645,7 @@ elmApi modName (Module (ApiDecl kind type_ idField) types _) =
           toLowercase type_
 
       exposing =
-          concat
+          List.concat
           [ [ "get"
             , "update"
             , "delete"
@@ -667,15 +654,15 @@ elmApi modName (Module (ApiDecl kind type_ idField) types _) =
             ]
           , Map.keys types
           , Map.keys types
-            & map (\ typeName -> "default" + typeName)
+            & List.map (\ typeName -> "default" + typeName)
           , Map.keys types
-            & map (\ typeName -> "encode" + typeName)
+            & List.map (\ typeName -> "encode" + typeName)
           , Map.keys types
-            & map (\ typeName -> toLowercase typeName + "Decoder")
+            & List.map (\ typeName -> toLowercase typeName + "Decoder")
           ]
 
       (+) =
-          Text.append
+          String.append
 
       indexTypeRep =
           types
@@ -685,7 +672,7 @@ elmApi modName (Module (ApiDecl kind type_ idField) types _) =
               case type_ of
                   ( TypeDecl _ fields ) ->
                       fields
-                      & Prelude.filter ( (==) idField . Prelude.fst )
+                      & List.filter ( (==) idField . Tuple.first )
                       & ( \xs ->
                             case xs of
                                 [ ( _, typeRep ) ] -> typeRep
@@ -696,13 +683,13 @@ elmApi modName (Module (ApiDecl kind type_ idField) types _) =
       get =
           case kind of
               "ncms" ->
-                  Text.unlines
+                  String.join "\n"
                   [ "get : " + showTypeRep indexTypeRep + " -> Task Error " + type_
                   , "get ="
                   , "    Backend.get \"" + endpoint + "\" encode" + type_ + " " + toLowercase type_ + "Decoder"
                   ]
               "github" ->
-                  Text.unlines
+                  String.join "\n"
                   [ "get : (Result Error " + type_ + " -> msg) -> String -> String -> String -> " + showTypeRep indexTypeRep + " -> Cmd msg"
                   , "get ="
                   , "    Backend.get \"" + endpoint + "\" encode" + type_ + " " + toLowercase type_ + "Decoder"
@@ -713,13 +700,13 @@ elmApi modName (Module (ApiDecl kind type_ idField) types _) =
       delete =
           case kind of
               "ncms" ->
-                  Text.unlines
+                  String.join "\n"
                   [ "delete : " + showTypeRep indexTypeRep + " -> Task Error ()"
                   , "delete ="
                   , "    Backend.delete \"" + endpoint + "\" encode" + type_ + " " + toLowercase type_ + "Decoder"
                   ]
               "github" ->
-                  Text.unlines
+                  String.join "\n"
                   [ "delete : (Result Error () -> msg) -> String -> String -> String -> " + showTypeRep indexTypeRep + " -> Cmd msg"
                   , "delete ="
                   , "    Backend.delete \"" + endpoint + "\" encode" + type_ + " " + toLowercase type_ + "Decoder"
@@ -730,13 +717,13 @@ elmApi modName (Module (ApiDecl kind type_ idField) types _) =
       update =
           case kind of
               "ncms" ->
-                  Text.unlines
+                  String.join "\n"
                   [ "update : " + type_ + " -> Task Error ()"
                   , "update ="
                   , "    Backend.create \"" + endpoint + "\" encode" + type_ + " " + toLowercase type_ + "Decoder ." + idField
                   ]
               "github" ->
-                  Text.unlines
+                  String.join "\n"
                   [ "update : (Result Error " + type_ + " -> msg) -> String -> String -> String -> " + type_ + " -> Cmd msg"
                   , "update ="
                   , "    Backend.create \"" + endpoint + "\" encode" + type_ + " " + toLowercase type_ + "Decoder ." + idField
@@ -747,13 +734,13 @@ elmApi modName (Module (ApiDecl kind type_ idField) types _) =
       create =
           case kind of
               "ncms" ->
-                  Text.unlines
+                  String.join "\n"
                   [ "create : " + type_ + " -> Task Error ()"
                   , "create ="
                   , "    Backend.create \"" + endpoint + "\" encode" + type_ + " " + toLowercase type_ + "Decoder ." + idField
                   ]
               "github" ->
-                  Text.unlines
+                  String.join "\n"
                   [ "create : (Result Error " + type_ + " -> msg) -> String -> String -> String -> " + type_ + " -> Cmd msg"
                   , "create ="
                   , "    Backend.create \"" + endpoint + "\" encode" + type_ + " " + toLowercase type_ + "Decoder ." + idField
@@ -764,13 +751,13 @@ elmApi modName (Module (ApiDecl kind type_ idField) types _) =
       list =
           case kind of
               "ncms" ->
-                  Text.unlines
+                  String.join "\n"
                   [ "list : Task Error (List " + type_ + ")"
                   , "list ="
                   , "    Backend.list \"" + endpoint + "\" encode" + type_ + " " + toLowercase type_ + "Decoder"
                   ]
               "github" ->
-                  Text.unlines
+                  String.join "\n"
                   [ "list : (Result Error (List " + type_ + ") -> msg) -> String -> String -> String -> Cmd msg"
                   , "list ="
                   , "    Backend.list \"" + endpoint + "\" encode" + type_ + " " + toLowercase type_ + "Decoder"
@@ -785,8 +772,8 @@ elmApi modName (Module (ApiDecl kind type_ idField) types _) =
           , list
           , create
           ]
-          & Text.intercalate "\n\n"
-          & flip Text.append "\n\n"
+          & String.join "\n\n"
+          & flip String.append "\n\n"
 
       encoders =
           let
@@ -804,24 +791,24 @@ elmApi modName (Module (ApiDecl kind type_ idField) types _) =
                           "Encode.list << List.map " + encodeTypeRep typeRep + "<|"
 
               decodeTypeRep (TypeDecl typeName fields)  =
-                  Text.unlines
+                  String.join "\n"
                   [ "encode" + typeName + " : " + typeName + " -> Decode.Value"
                   , "encode" + typeName + " value ="
                   , fields
-                    & map (\ ( fieldName, typeRep ) ->
+                    & List.map (\ ( fieldName, typeRep ) ->
                         "( \"" + fieldName + "\", "
                         + encodeTypeRep typeRep  + " value." + fieldName + " )"
                       )
-                    & Text.intercalate "\n    , "
-                    & Text.append "    [ "
-                    & flip Text.append "\n    ]"
+                    & String.join "\n    , "
+                    & String.append "    [ "
+                    & flip String.append "\n    ]"
                   , "    |> Encode.object"
                   ]
           in
           Map.elems types
-          & map decodeTypeRep
-          & Text.intercalate "\n\n"
-          & flip Text.append "\n\n"
+          & List.map decodeTypeRep
+          & String.join "\n\n"
+          & flip String.append "\n\n"
 
       decoders =
           let
@@ -836,27 +823,27 @@ elmApi modName (Module (ApiDecl kind type_ idField) types _) =
 
 
               decodeTypeRep (TypeDecl typeName fields)  =
-                  Text.unlines
+                  String.join "\n"
                   [ toLowercase typeName + "Decoder : Decoder " + typeName
                   , toLowercase typeName + "Decoder ="
                   , fields
-                    & map (\ ( fieldName, typeRep ) ->
+                    & List.map (\ ( fieldName, typeRep ) ->
                         "        ( Decode.at [ \"" + fieldName + "\" ] "
                         + typeRepDecoder typeRep  + " )"
                       )
-                    & Text.unlines
-                    & Text.append (
-                          if Prelude.length fields == 1 then
+                    & String.join "\n"
+                    & String.append (
+                          if List.length fields == 1 then
                               "    Decode.map " + typeName + "\n"
                           else
-                              "    Decode.map" + Text.pack (show (Prelude.length fields)) + " " + typeName + "\n"
+                              "    Decode.map" + String.pack (show (List.length fields)) + " " + typeName + "\n"
                       )
                   ]
           in
           Map.elems types
-          & map decodeTypeRep
-          & Text.intercalate "\n\n"
-          & flip Text.append "\n\n"
+          & List.map decodeTypeRep
+          & String.join "\n\n"
+          & flip String.append "\n\n"
 
       showTypeRep typeRep =
           case typeRep of
@@ -869,19 +856,19 @@ elmApi modName (Module (ApiDecl kind type_ idField) types _) =
 
       typeDefs =
           Map.elems types
-          & map ( \ (TypeDecl typeName fields) ->
-                Text.unlines
+          & List.map ( \ (TypeDecl typeName fields) ->
+                String.join "\n"
                 [ "type alias "  + typeName + " ="
                 , fields
-                  & map (\ (fieldName, typeRep) ->
+                  & List.map (\ (fieldName, typeRep) ->
                         fieldName + " : " + showTypeRep typeRep
                     )
-                  & Text.intercalate "\n    , "
-                  & Text.append "    { "
-                  & flip Text.append "\n    }"
+                  & String.join "\n    , "
+                  & String.append "    { "
+                  & flip String.append "\n    }"
                 ]
             )
-          & Text.intercalate "\n\n"
+          & String.join "\n\n"
 
       typeRepDefault typeRep =
           case typeRep of
@@ -894,28 +881,28 @@ elmApi modName (Module (ApiDecl kind type_ idField) types _) =
 
       defaultTypes =
           Map.elems types
-          & map ( \ (TypeDecl typeName fields) ->
-                Text.unlines
+          & List.map ( \ (TypeDecl typeName fields) ->
+                String.join "\n"
                 [ "default" + typeName + " : " + typeName
                 , "default" + typeName + " ="
                 , fields
-                  & map (\ (fieldName, typeRep) ->
+                  & List.map (\ (fieldName, typeRep) ->
                         fieldName + " = " + typeRepDefault typeRep
                     )
-                  & Text.intercalate "\n    , "
-                  & Text.append "    { "
-                  & flip Text.append "\n    }"
+                  & String.join "\n    , "
+                  & String.append "    { "
+                  & flip String.append "\n    }"
                 ]
             )
-          & Text.intercalate "\n\n"
+          & String.join "\n\n"
   in
-  Text.unlines
+  String.join "\n"
   [ "module " + modName + " exposing"
   , "    ( "
   ,
     exposing
-    & Text.intercalate "\n    , "
-    & Text.append "      "
+    & String.join "\n    , "
+    & String.append "      "
 
   , "    )"
   , "\n"
@@ -953,14 +940,14 @@ elmApi modName (Module (ApiDecl kind type_ idField) types _) =
   ]
 
 
-readFile :: Prelude.FilePath -> IO String
+readFile :: FilePath -> IO String
 readFile =
-  fmap Text.pack . Prelude.readFile
+  String.readFile
 
 
-writeFile :: Prelude.FilePath -> String -> IO ()
+writeFile :: FilePath -> String -> IO ()
 writeFile fileName contents =
-  Prelude.writeFile fileName (Text.unpack contents)
+  String.writeFile fileName contents
 
 
 data Module =
@@ -971,7 +958,7 @@ fromExprs :: List Expr -> Either String Module
 fromExprs exprs =
   let
       (apiDecls, typeDecls, garbage) =
-          foldl
+          List.foldl
             (\(apiDecls, typeDecls, garbage') expr ->
                 case expr of
                     ETypeDecl typeDecl ->
@@ -981,7 +968,7 @@ fromExprs exprs =
                     EEof garbage ->
                         ( apiDecls, typeDecls,
                               garbage
-                              & Text.append garbage'
+                              & String.append garbage'
                         )
             )
             ([], [], "")
@@ -993,7 +980,7 @@ fromExprs exprs =
               Module
                   apiDecl
                   ( typeDecls
-                    & map (\ typeDecl ->
+                    & List.map (\ typeDecl ->
                         case typeDecl of
                             TypeDecl typeName _ -> (typeName, typeDecl)
                       )
@@ -1036,7 +1023,7 @@ exprs =
           Just token ->
               (:) <$> (pure token) <*> exprs
           Nothing ->
-              fmap (singleton . EEof) (Parser.takeText)
+              fmap (List.singleton . EEof) (Parser.takeText)
 
 
 data ApiDecl
@@ -1070,7 +1057,7 @@ typeName =
 word :: Parser String
 word =
   many Parser.letter
-  & fmap Text.pack
+  & fmap String.pack
   & lexeme
 
 
@@ -1149,105 +1136,3 @@ many =
 oneOf :: List (Parser a) -> Parser a
 oneOf =
   Parser.choice
-
-
--- PRELUDE
-
-
-type String
-  = Text.Text
-
-
-foldl =
-  Prelude.foldl
-
-
-type List a
-  = [a]
-
-
-void =
-  const ()
-
-
-const =
-  Prelude.const
-
-
-fmap =
-  Prelude.fmap
-
-
-print =
-  Prelude.print
-
-
-map =
-  Prelude.map
-
-
-($) =
-  (Prelude.$)
-
-
-(.) =
-  (Prelude..)
-
-
-error =
-  Prelude.error
-
-
-pure =
-  Prelude.return
-
-
-type FilePath
-  = Prelude.FilePath
-
-
-singleton x =
-  [x]
-
-
-head xs =
-  case xs of
-      [] -> Nothing
-      ( x : _ ) -> Just x
-
-
-(/=) =
-  (Prelude./=)
-
-
-(==) =
-    (Prelude.==)
-
-
-toLowercase str =
-    case Text.uncons str of
-        Just (firstLetter, rest) ->
-          Text.toLower (Text.pack (singleton firstLetter)) `Text.append` rest
-        Nothing ->
-            str
-
-
-debug s x =
-    unsafePerformIO (Prelude.putStrLn (s Prelude.++ ": " Prelude.++ show x))
-        `Prelude.seq` x
-
-
-identity =
-    Prelude.id
-
-
-flip =
-    Prelude.flip
-
-
-not =
-    Prelude.not
-
-
-type IOError =
-    Prelude.IOError

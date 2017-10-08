@@ -1,0 +1,36 @@
+name:                ncms
+version:             0.1.0.0
+homepage:            https://aforemny.github.io/ncms/
+license:             BSD3
+license-file:        LICENSE
+author:              Alexander Foremny
+maintainer:          aforemny@posteo.de
+category:            Web
+build-type:          Simple
+extra-source-files:  ChangeLog.md, README.md
+cabal-version:       >=1.10
+
+executable ncms
+  main-is:             Main.hs
+  default-extensions:
+    NoImplicitPrelude,
+    NoMonomorphismRestriction,
+    OverloadedStrings,
+    ScopedTypeVariables
+  build-depends:
+    aeson >=1.1 && <1.2,
+    attoparsec >=0.13 && < 0.14,
+    base >=4.9 && <4.10,
+    bytestring >=0.10 && <0.11,
+    containers >=0.5 && <0.6,
+    directory >=1.3 && <1.4,
+    filepath >=1.4 && <1.5,
+    mtl >=2.2 && <2.3,
+    process >=1.4 && <1.5,
+    snap >=1.0 && <1.1,
+    snap-server >=1.0 && <1.1,
+    text >=1.2 && <1.3,
+    unordered-containers >=0.2 && <0.3,
+    vector >=0.12 && <0.13
+  hs-source-dirs:      backend
+  default-language:    Haskell2010

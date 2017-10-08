@@ -1,3 +1,6 @@
+build:
+	nix-build default.nix -A ncms
+
 cms:
 	mkdir -p build
 	cp page.html build/index.html
