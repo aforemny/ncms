@@ -2,6 +2,7 @@ module Parser where
 
 import Core
 import Data.Attoparsec.Text (Parser)
+import qualified Config
 import qualified Core.Dict as Dict
 import qualified Core.Directory as Directory
 import qualified Core.List as List
@@ -10,8 +11,8 @@ import qualified Data.Attoparsec.Text as Attoparsec
 import qualified Prelude
 
 
-findApiFiles = do
-  liftIO (Directory.findFiles ".")
+findApiFiles config = do
+  liftIO (Directory.findFiles (Config.dataDirectory config))
   & fmap (List.map (\ fp -> List.dropLeft 2 fp))
   & fmap (
       List.filter ( \ fp ->

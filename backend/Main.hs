@@ -4,8 +4,10 @@ import Core
 import Core.Directory as Directory
 import Parser (Module(..), ApiDecl(..), TypeDecl(..), TypeRep(..))
 import qualified CodeGen
+import qualified Config
 import qualified Core.List as List
 import qualified Core.Maybe as Maybe
+import qualified Core.Process as Process
 import qualified Core.String as String
 import qualified Data.Aeson as Aeson
 import qualified Data.ByteString.Char8 as LB
@@ -15,47 +17,91 @@ import qualified Data.Map as Map
 import qualified Data.Vector as Vector
 import qualified Image
 import qualified Parser
+import qualified Paths_ncms as Paths
 import qualified Snap
 
 
-main = do
+createStateDirectory config = do
     mapM mkdir
-      [ "src/Api"
-      , "log"
-      , "image"
+      [ Config.dataDirectory config
+      , Config.imageDirectory config
+      , Config.logDirectory config
+      , Config.siteDirectory config
+      , Config.sourceDirectory config
+      , Config.stateDirectory config
       ]
 
-    apiFiles <- Parser.findApiFiles
+    sourceFiles <-
+      mapM (fmap String.pack . Paths.getDataFileName)
+        [ "elm-mdc"
+        , "elm-ncms"
+        , "file-reader"
+        , "frontend"
+        , "page.html"
+        , "elm-package.json"
+        , "Makefile"
+        ]
+    rsync
+      ( [ "-r", "--chmod=u=rwX,g=rX,o="
+        , sourceFiles & String.join " "
+        , Config.sourceDirectory config & String.pack
+        ]
+      )
+      ""
+
+
+rsync =
+    Process.shell "rsync"
+
+
+main = do
+    let
+        config =
+            Config.defaultConfig
+
+    createStateDirectory config
+
+    apiFiles <- Parser.findApiFiles config
     modules <- mapM Parser.parseApiFile apiFiles
 
-    mapM_ CodeGen.makeElmUserType modules
-    CodeGen.makeElmCmsType modules
+    -- mapM_ (CodeGen.makeElmUserType config) modules
+    CodeGen.makeElmCmsType config modules
 
-    imageFiles <- Image.findImageFiles
+    imageFiles <- Image.findImageFiles config
 
     let
         apiRoutes =
-            List.map apiRoute modules
+            List.map (apiRoute config) modules
 
-    Snap.httpServe Snap.defaultConfig $ do
-      Snap.route
-        ( [
-            [ (,) "" $ do
-                Snap.writeText =<< liftIO (String.readFile "build/index.html")
-            , (,) "elm.js" $ do
-                Snap.writeText =<< liftIO (String.readFile "build/elm.js")
-            ]
+        snapConfig =
+            let
+                accessLog =
+                    Config.logDirectory config Directory.</> "access.log"
+                errorLog =
+                    Config.logDirectory config Directory.</> "error.log"
+            in
+            Snap.defaultConfig
+            & Snap.setAccessLog
+                (Snap.ConfigFileLog accessLog)
+            & Snap.setErrorLog
+                (Snap.ConfigFileLog errorLog)
 
-          , Image.imageRoute
+    Snap.httpServe snapConfig $
+      Snap.route . List.concat $
+      [
+        [ (,) "" $ do
+            Snap.writeText =<< liftIO (String.readFile (Config.siteDirectory config Directory.</> "index.html"))
+        , (,) "elm.js" $ do
+            Snap.writeText =<< liftIO (String.readFile (Config.siteDirectory config Directory.</> "elm.js"))
+        ]
 
-          , List.concat apiRoutes
-          ]
-          & List.concat
-        )
+      , Image.imageRoute config
+
+      , List.concat apiRoutes
+      ]
 
 
-apiRoute :: Module -> List (LB.ByteString, Snap.Snap ())
-apiRoute (Module (ApiDecl kind type_ idField) types _) =
+apiRoute config (Module (ApiDecl kind type_ idField) types _) =
     let
         endpoint =
             toLowercase type_
@@ -72,7 +118,9 @@ apiRoute (Module (ApiDecl kind type_ idField) types _) =
         Snap.modifyResponse $
             Snap.setContentType "application/json"
         Snap.method Snap.GET $  do
-            files <- liftIO $ findFiles (String.unpack endpoint)
+            files <- liftIO $ findFiles $
+                Config.dataDirectory config
+                Directory.</> String.unpack endpoint
             let
                 jsonFiles =
                     files
@@ -91,7 +139,9 @@ apiRoute (Module (ApiDecl kind type_ idField) types _) =
           id_ <- fmap (Maybe.withDefault "" . Maybe.map LB.unpack) (Snap.getParam "id")
           let
               fn =
-                  String.unpack endpoint Directory.</> (id_ ++ ".json")
+                  Config.dataDirectory config
+                  Directory.</> String.unpack endpoint
+                  Directory.</> (id_ ++ ".json")
           doesFileExist <- liftIO $ Directory.doesFileExist fn
           if doesFileExist then do
               file <- fmap Aeson.decode (liftIO (ByteString.readFile fn))
@@ -120,12 +170,14 @@ apiRoute (Module (ApiDecl kind type_ idField) types _) =
                       Just obj -> do
                           let
                               fn =
-                                  String.unpack endpoint Directory.</> (id_ ++ ".json")
-                          if Directory.normalize fn == fn then do
-                              liftIO $ ByteString.writeFile fn (Aeson.encode obj)
-                              Snap.writeLBS (Aeson.encode obj)
-                          else
-                              Snap.writeText "does not normalize"
+                                  Directory.normalize $
+                                  Config.dataDirectory config
+                                  Directory.</> String.unpack endpoint
+                                  Directory.</> (id_ ++ ".json")
+                          liftIO $ do
+                            mkdir (Directory.takeDirectory fn)
+                            ByteString.writeFile fn (Aeson.encode obj)
+                          Snap.writeLBS (Aeson.encode obj)
                       Nothing ->
                           Snap.writeText "does not verify"
               Nothing ->
@@ -139,26 +191,26 @@ apiRoute (Module (ApiDecl kind type_ idField) types _) =
           id_ <- fmap (Maybe.withDefault "" . Maybe.map LB.unpack) (Snap.getParam "id")
           let
               fn =
-                  String.unpack endpoint Directory.</> (id_ ++ ".json")
-          if Directory.normalize fn == fn then do
-              doesExist <- liftIO (Directory.doesFileExist fn)
-              if doesExist then do
-                  storedObj <- fmap Aeson.decode (liftIO (ByteString.readFile fn))
-                  case storedObj of
-                      Just storedObj -> do
-                          case verify typeDecl storedObj of
-                              Just parsedStoredObj -> do
-                                  liftIO $ Directory.removeFile fn
-                                  Snap.writeLBS (Aeson.encode parsedStoredObj)
-                              Nothing -> do
-                                  liftIO $ Directory.removeFile fn
-                                  Snap.writeText "does not verify"
-                      Nothing ->
-                          Snap.writeText "does not parse"
-              else
-                  Snap.writeText "does not exist"
+                  Directory.normalize $
+                  Config.dataDirectory config
+                  Directory.</> String.unpack endpoint
+                  Directory.</> (id_ ++ ".json")
+          doesExist <- liftIO (Directory.doesFileExist fn)
+          if doesExist then do
+              storedObj <- fmap Aeson.decode (liftIO (ByteString.readFile fn))
+              case storedObj of
+                  Just storedObj -> do
+                      case verify typeDecl storedObj of
+                          Just parsedStoredObj -> do
+                              liftIO $ Directory.removeFile fn
+                              Snap.writeLBS (Aeson.encode parsedStoredObj)
+                          Nothing -> do
+                              liftIO $ Directory.removeFile fn
+                              Snap.writeText "does not verify"
+                  Nothing ->
+                      Snap.writeText "does not parse"
           else
-              Snap.writeText "does not normalize"
+              Snap.writeText "does not exist"
 
     , -- action create:
       (,) (LB.pack (String.unpack endpoint)) $ do
@@ -172,16 +224,18 @@ apiRoute (Module (ApiDecl kind type_ idField) types _) =
                       Just obj -> do
                           let
                               fn =
-                                  String.unpack endpoint Directory.</> (id_ ++ ".json")
+                                  Directory.normalize $
+                                  Config.dataDirectory config
+                                  Directory.</> String.unpack endpoint
+                                  Directory.</> (id_ ++ ".json")
                               id_ =
                                   case HashMap.lookup idField obj of
                                       Just (Aeson.String id_) -> String.unpack id_
                                       _ -> ""
-                          if Directory.normalize fn == fn then do
-                              liftIO $ ByteString.writeFile fn (Aeson.encode obj)
-                              Snap.writeLBS (Aeson.encode obj)
-                          else
-                              Snap.writeText "does not normalize"
+                          liftIO $ do
+                            mkdir (Directory.takeDirectory fn)
+                            ByteString.writeFile fn (Aeson.encode obj)
+                          Snap.writeLBS (Aeson.encode obj)
                       Nothing ->
                           Snap.writeText "does not verify"
               Nothing ->

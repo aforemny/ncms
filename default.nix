@@ -6,15 +6,16 @@ rec {
   elm-repl = pkgs.elmPackages.elm-repl;
 
   ghc = pkgs.haskellPackages.ghc.withPackages ( hsPackages : with hsPackages;
-      [ attoparsec snap directory aeson ]
+    [ aeson attoparsec base bytestring containers directory filepath mtl
+      process snap snap-server text unordered-containers vector
+    ]
   );
 
   ncms =
     pkgs.haskellPackages.callPackage ./ncms.nix {};
-#  pkgs.stdenv.mkDerivation {
-#    name = "ncms";
-#    buildInputs = [
-#      elm-make elm-package elm-repl ghc
-#    ];
-#  };
+
+  env = pkgs.stdenv.mkDerivation {
+    name = "ncms-env";
+    buildInputs = [ ghc elm-make elm-package elm-repl ];
+  };
 }

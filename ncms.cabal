@@ -10,10 +10,37 @@ build-type:          Simple
 extra-source-files:  ChangeLog.md, README.md
 cabal-version:       >=1.10
 
+data-files:
+  elm-mdc/elm-mdc.js,
+  elm-mdc/material-components-web.css,
+  elm-mdc/src/*.elm
+  elm-mdc/src/Material/Drawer/*.elm
+  elm-mdc/src/Material/*.elm
+  elm-mdc/src/Material/Internal/*.elm
+  elm-mdc/src/Material/Menu/*.elm
+  elm-mdc/src/Material/Textfield/*.elm
+  elm-ncms/src/*.elm,
+  elm-ncms/src/Native/*.js,
+  elm-ncms/src/Ncms/Backend/*.elm,
+  elm-ncms/src/Ncms/*.elm,
+  elm-ncms/src/Ncms/Github/*.elm,
+  file-reader/src/*.elm,
+  file-reader/src/Native/*.js,
+  frontend/*.elm,
+  frontend/Pages/*.elm,
+  page.html,
+  elm-package.json,
+  Makefile
+
+autogen-modules:
+  Paths_ncms
+
 executable ncms
   main-is:             Main.hs
   ghc-options:
     -fwarn-unused-imports
+  other-modules:
+      Paths_ncms
   default-extensions:
     NoImplicitPrelude,
     NoMonomorphismRestriction,

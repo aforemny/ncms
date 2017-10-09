@@ -5,9 +5,10 @@
     "license": "BSD3",
     "source-directories": [
         "elm-mdc/src",
+        "elm-ncms/src",
         "file-reader/src",
-        "ncms/src",
-        "src"
+        "frontend",
+        "."
     ],
     "exposed-modules": [],
     "native-modules": true,

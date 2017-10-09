@@ -8,6 +8,7 @@ mkDerivation {
   src = ./.;
   isLibrary = false;
   isExecutable = true;
+  enableSeparateDataOutput = true;
   executableHaskellDepends = [
     aeson attoparsec base bytestring containers directory filepath mtl
     process snap snap-server text unordered-containers vector

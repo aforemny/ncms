@@ -261,14 +261,7 @@ view lift { navigate } { folder } model =
         , css "margin-right" "24px"
         ]
         ( imageDirectories
-          |> List.map (\ imageDirectory_ ->
-                 let
-                     imageDirectory =
-                         imageDirectory_
-                         |> String.split "/"
-                         |> Maybe.withDefault [] << List.tail
-                         |> String.join "/"
-                 in
+          |> List.map (\ imageDirectory ->
                  styled Html.div
                  [ Options.onClick (navigate (Page.Image (Just imageDirectory)))
                  , when (Just imageDirectory == folder) <|
@@ -320,7 +313,7 @@ view lift { navigate } { folder } model =
                       |> List.filterMap ( \ image ->
                              case folder of
                                  Just folder ->
-                                     if String.startsWith ("image/" ++ folder) image.directory then
+                                     if String.startsWith folder image.directory then
                                          Just image
                                      else
                                          Nothing
@@ -340,7 +333,7 @@ view lift { navigate } { folder } model =
                              GridList.tile []
                              [ GridList.primary []
                                [ GridList.primaryContent
-                                 [ css "background-image" ("url(\"" ++ url ++ "\")")
+                                 [ css "background-image" ("url(\"image/" ++ url ++ "\")")
                                  ]
                                  []
                                ]

@@ -6,6 +6,10 @@ module Core.Directory
   , dropExtension
   , doesFileExist
   , removeFile
+  , takeDirectory
+  , makeRelative
+  , takeBaseName
+  , takeFileName
   )
   where
 
@@ -16,6 +20,18 @@ import Core.Maybe (Maybe(..))
 import qualified Core.List as List
 import qualified System.Directory
 import qualified System.FilePath
+
+
+takeBaseName =
+    System.FilePath.takeBaseName
+
+
+takeFileName =
+    System.FilePath.takeFileName
+
+
+makeRelative =
+    System.FilePath.makeRelative
 
 
 type FilePath =
@@ -45,6 +61,10 @@ removeFile =
     System.Directory.removeFile
 
 
+takeDirectory =
+    System.FilePath.takeDirectory
+
+
 findFiles :: FilePath -> IO (List FilePath)
 
 findFiles "" =
@@ -53,7 +73,7 @@ findFiles "" =
 
 findFiles dir = do
     dirs <- findDirectories dir
-    fmap (fmap List.concat) $ forM (dir:dirs) $ \dir ->
+    fmap List.concat $ forM (dir:dirs) $ \dir ->
         System.Directory.listDirectory dir
         & fmap (
             List.map ( \ fn -> do

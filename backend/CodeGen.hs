@@ -6,26 +6,32 @@ module CodeGen
 
 import Core
 import Parser (Module(..), ApiDecl(..), TypeDecl(..), TypeRep(..))
+import qualified Config
 import qualified Core.Dict as Dict
+import qualified Core.Directory as Directory
 import qualified Core.List as List
 import qualified Core.Maybe as Maybe
 import qualified Core.String as String
 import qualified Core.Tuple as Tuple
 
 
-makeElmUserType mod_@(Module (ApiDecl kind type_ idField) types _) = do
+makeElmUserType config mod_@(Module (ApiDecl kind type_ idField) types _) = do
   let
       moduleName =
           "Api." `String.append` type_
 
       fp =
-          "src/Api/" `String.append` type_ `String.append` ".elm"
-          & String.unpack
+          Config.sourceDirectory config
+              Directory.</> "Api"
+              Directory.</> String.unpack (type_ String.++ ".elm")
   String.writeFile fp (CodeGen.elmApi moduleName mod_)
 
 
-makeElmCmsType modules = do
-  String.writeFile "src/Api.elm" (CodeGen.elmApis modules)
+makeElmCmsType config modules = do
+  let
+      fp =
+        Config.sourceDirectory config Directory.</> "Api.elm"
+  String.writeFile fp (CodeGen.elmApis modules)
 
 
 elmApis modules =
@@ -50,11 +56,6 @@ elmApis modules =
     , "import Ncms.Backend exposing (Rest,Prim(..))"
     , "import Ncms.Backend.Ncms as Backend"
     , "import Task exposing (Task)"
-    , modules
-      & List.map (\ (Module (ApiDecl kind type_ idField) types _) ->
-          "import Api." + type_ + " as " + type_
-        )
-      & String.join "\n"
     , "\n"
     , "-- API"
     , "\n"

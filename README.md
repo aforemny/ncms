@@ -6,20 +6,16 @@ $ git submodule init
 $ git submodule update
 ```
 
-- Edit `file-reader/src/Native/FileReader.js`
-
+- Build:
 ```
-$ sed -i 's/_simonh1000\$file_reader/_aforemny$ncms/' file-reader/src/Native/FileReader.js
-```
-
-- Run ncms backend:
-```
-$ nix-shell default.nix -A ncms --run "runghc ncms"
+$ nix-build . -A ncms
 ```
 
-- Run make:
+- Run:
 ```
-$ make
+$ mkdir example
+$ cd example
+$ ../result/bin/ncms
 ```
 
 - Open in browser:
